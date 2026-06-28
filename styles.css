@@ -286,6 +286,35 @@ body {
     text-decoration: underline;
 }
 
+.home-voter-card {
+    background: var(--card-bg);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 16px 18px;
+    margin-bottom: 20px;
+}
+.home-voter-form {
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.home-voter-form > div {
+    flex: 1;
+    min-width: 220px;
+}
+.home-voter-active {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.home-voter-active strong {
+    display: block;
+    color: var(--primary);
+}
+
 .homepage-actions {
     display: flex;
     flex-wrap: wrap;
@@ -542,6 +571,44 @@ body {
     gap: 6px;
 }
 
+.attendance-stats {
+    margin: 8px 0 24px;
+}
+.attendance-title {
+    font-weight: 700;
+    color: var(--primary);
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.attendance-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 10px;
+}
+.attendance-card {
+    border: 1px solid #e5ebf2;
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+.attendance-class {
+    font-size: 0.82rem;
+    color: var(--text-light);
+}
+.attendance-count {
+    font-size: 1.25rem;
+    font-weight: 800;
+    color: var(--primary);
+    margin-top: 2px;
+}
+.attendance-meta {
+    font-size: 0.76rem;
+    color: var(--text-light);
+}
+
 .voter-list-wrap {
     max-height: 300px;
     overflow-y: auto;
@@ -549,9 +616,25 @@ body {
 .voter-item {
     display: flex;
     justify-content: space-between;
-    padding: 6px 0;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 0;
     border-bottom: 1px solid #eef2f6;
     font-size: 0.9rem;
+}
+.voter-info {
+    min-width: 0;
+}
+.voter-info .v-meta {
+    color: var(--text-light);
+    font-size: 0.78rem;
+    margin-top: 2px;
+}
+.voter-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
 }
 .voter-item .v-status {
     font-size: 0.75rem;

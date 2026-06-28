@@ -54,6 +54,8 @@
 
     let appData = null;
     let editingNomineeId = null;
+    let editingVoterId = null;
+    let activeHomeVoterId = null;
 
     function loadData() {
         try {
@@ -90,6 +92,10 @@
                 if (parsed.voters) {
                     for (const v of parsed.voters) {
                         if (v.houseId === undefined) v.houseId = null;
+                        if (v.admissionNumber === undefined) v.admissionNumber = v.rollNumber || '';
+                        if (v.className === undefined) v.className = v.class || '';
+                        if (v.section === undefined) v.section = '';
+                        if (v.rollNumber === undefined) v.rollNumber = v.admissionNumber || '';
                     }
                 }
                 // Ensure nominees have houseId
@@ -182,7 +188,29 @@
     }
 
     function getVoterByRoll(roll) {
-        return appData.voters.find(v => v.rollNumber.toLowerCase() === roll.toLowerCase().trim());
+        const voterId = roll.toLowerCase().trim();
+        return appData.voters.find(v => (v.admissionNumber || '').toLowerCase() === voterId) ||
+            appData.voters.find(v => (v.rollNumber || '').toLowerCase() === voterId);
+    }
+
+    function getVoterById(id) {
+        return appData.voters.find(v => v.id === id);
+    }
+
+    function getActiveHomeVoter() {
+        return activeHomeVoterId ? getVoterById(activeHomeVoterId) : null;
+    }
+
+    function getEligibleCategoriesForVoter(voter) {
+        return appData.categories.filter(cat => !cat.houseSpecific || !!voter?.houseId);
+    }
+
+    function getNomineesForCategoryAndVoter(category, voter) {
+        if (!category.houseSpecific) {
+            return getNomineesByCategory(category.id);
+        }
+        if (!voter?.houseId) return [];
+        return getNomineesByCategoryAndHouse(category.id, voter.houseId);
     }
 
     function getNomineesByCategory(categoryId) {
@@ -318,7 +346,7 @@
             error: 'fa-exclamation-circle',
             gold: 'fa-star'
         };
-        toast.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i} ${message}`;
+        toast.innerHTML = `<i class="fas ${icons[type] || icons.info}"></i> ${message}`;
         container.appendChild(toast);
         setTimeout(() => {
             toast.style.opacity = '0';
@@ -333,21 +361,37 @@
 
     function renderHomepage() {
         const container = document.getElementById('categoriesContainer');
+        renderHomeVoterCard();
         if (appData.categories.length === 0) {
             container.innerHTML =
                 '<div class="text-center text-muted" style="padding:40px 0;">No categories defined. Please add categories in settings.</div>';
+            updateButtonVisibility();
+            renderAttendanceBadge();
+            renderAttendanceStats();
+            return;
+        }
+        const voter = getActiveHomeVoter();
+        if (!voter) {
+            container.innerHTML =
+                '<div class="text-center text-muted" style="padding:32px 0;">Enter your admission number above to see your ballot.</div>';
+            updateButtonVisibility();
+            renderAttendanceBadge();
+            renderAttendanceStats();
             return;
         }
 
         let html = '';
         let hasNominees = false;
-        for (const cat of appData.categories) {
-            const nominees = getNomineesByCategory(cat.id);
+        const categories = getEligibleCategoriesForVoter(voter);
+        for (const cat of categories) {
+            const nominees = getNomineesForCategoryAndVoter(cat, voter);
+            const house = cat.houseSpecific ? getHouseById(voter.houseId) : null;
+            const heading = house ? `${cat.name} - ${house.name}` : cat.name;
             if (nominees.length === 0) {
                 html += `
                     <div class="category-section">
                         <div class="cat-header">
-                            <h3>${cat.name}</h3>
+                            <h3>${heading}</h3>
                             <span class="badge-count">0</span>
                         </div>
                         <div class="text-muted text-center" style="padding:12px 0;">No nominees for this category.</div>
@@ -359,7 +403,7 @@
             html += `
                 <div class="category-section" data-category="${cat.id}">
                     <div class="cat-header">
-                        <h3>${cat.name}</h3>
+                        <h3>${heading}</h3>
                         <span class="badge-count">${nominees.length}</span>
                     </div>
             `;
@@ -419,19 +463,86 @@
 
         // Show attendance (total voters who have voted)
         // We'll show a small badge in the homepage-actions or header
-        const attendance = getVotedCount();
-        const total = getTotalVoters();
-        const attendanceHtml = `<span class="badge" style="background:var(--gold);color:#fff;padding:6px 16px;border-radius:30px;font-size:0.85rem;"><i class="fas fa-users"></i> Attendance: ${attendance}/${total}</span>`;
-        // Insert after categoriesContainer
+        renderAttendanceBadge();
+        renderAttendanceStats();
+    }
+
+    function renderHomeVoterCard() {
+        const form = document.getElementById('homeVoterForm');
+        const active = document.getElementById('homeVoterActive');
+        const voter = getActiveHomeVoter();
+        if (!form || !active) return;
+        if (!voter) {
+            form.style.display = 'flex';
+            active.classList.add('hidden');
+            active.innerHTML = '';
+            return;
+        }
+        const house = voter.houseId ? getHouseById(voter.houseId) : null;
+        form.style.display = 'none';
+        active.classList.remove('hidden');
+        active.innerHTML = `
+            <div>
+                <strong>${voter.name}</strong>
+                <span class="text-muted text-small">ID: ${voter.admissionNumber || voter.rollNumber || ''}${house ? ` · ${house.name}` : ''}</span>
+            </div>
+            <button type="button" class="btn btn-sm btn-outline" id="changeHomeVoterBtn"><i class="fas fa-sync-alt"></i> Change Voter</button>
+        `;
+        document.getElementById('changeHomeVoterBtn').addEventListener('click', function() {
+            activeHomeVoterId = null;
+            document.getElementById('homeVoterIdInput').value = '';
+            renderHomepage();
+        });
+    }
+
+    function renderAttendanceBadge() {
         const existing = document.querySelector('.homepage-actions .attendance-badge');
         if (existing) existing.remove();
         const actions = document.querySelector('.homepage-actions');
+        if (!actions) return;
         const badge = document.createElement('span');
         badge.className = 'badge attendance-badge';
         badge.style.cssText =
             'background:var(--gold);color:#fff;padding:6px 16px;border-radius:30px;font-size:0.85rem;display:inline-flex;align-items:center;gap:8px;';
-        badge.innerHTML = `<i class="fas fa-users"></i> Attendance: ${attendance}/${total}`;
+        badge.innerHTML = `<i class="fas fa-users"></i> Attendance: ${getVotedCount()}/${getTotalVoters()}`;
         actions.prepend(badge);
+    }
+
+    function renderAttendanceStats() {
+        const container = document.getElementById('attendanceStats');
+        if (!container) return;
+        if (appData.voters.length === 0) {
+            container.innerHTML = '';
+            return;
+        }
+        const groups = {};
+        for (const voter of appData.voters) {
+            const className = (voter.className || 'Unassigned').trim() || 'Unassigned';
+            const section = (voter.section || 'No Section').trim() || 'No Section';
+            const key = `${className}||${section}`;
+            if (!groups[key]) {
+                groups[key] = { className, section, total: 0, voted: 0, skipped: 0 };
+            }
+            groups[key].total++;
+            if (voter.hasVoted && !voter.skipped) groups[key].voted++;
+            if (voter.skipped) groups[key].skipped++;
+        }
+        const cards = Object.values(groups)
+            .sort((a, b) => `${a.className} ${a.section}`.localeCompare(`${b.className} ${b.section}`, undefined, { numeric: true }))
+            .map(group => {
+                const pending = group.total - group.voted - group.skipped;
+                return `
+                    <div class="attendance-card">
+                        <div class="attendance-class">Class ${group.className} ${group.section}</div>
+                        <div class="attendance-count">${group.voted}/${group.total}</div>
+                        <div class="attendance-meta">${pending} pending · ${group.skipped} skipped</div>
+                    </div>
+                `;
+            }).join('');
+        container.innerHTML = `
+            <div class="attendance-title"><i class="fas fa-chart-bar"></i> Attendance by Class &amp; Section</div>
+            <div class="attendance-grid">${cards}</div>
+        `;
     }
 
     function updateButtonVisibility() {
@@ -441,6 +552,7 @@
         // Verify button is only relevant if PIN is used (optional or required)
         const showVerify = (mode !== 'no_pin') && showVerifySetting;
 
+        document.getElementById('castVoteBtn').style.display = getActiveHomeVoter() ? 'inline-flex' : 'none';
         document.getElementById('skipVoteBtn').style.display = showSkip ? 'inline-flex' : 'none';
         document.getElementById('verifyVoteBtn').style.display = showVerify ? 'inline-flex' : 'none';
     }
@@ -594,7 +706,7 @@
         const container = document.getElementById('voterListContainer');
         document.getElementById('voterCountBadge').textContent = appData.voters.length;
         if (appData.voters.length === 0) {
-            container.innerHTML = '<div class="text-muted text-center" style="padding:16px 0;">No voters imported yet.</div>';
+            container.innerHTML = '<div class="text-muted text-center" style="padding:16px 0;">No voters added yet.</div>';
             return;
         }
         let html = '';
@@ -604,14 +716,33 @@
             if (v.hasVoted && !v.skipped) { status = '✅ Voted';
                 cls = 'voted'; } else if (v.skipped) { status = '⏭️ Skipped';
                 cls = 'skipped'; }
+            const house = v.houseId ? getHouseById(v.houseId) : null;
+            const details = [
+                `ID: ${v.admissionNumber || v.rollNumber || '—'}`,
+                v.className ? `Class ${v.className}` : '',
+                v.section ? `Section ${v.section}` : '',
+                v.rollNumber ? `Roll ${v.rollNumber}` : '',
+                house ? house.name : ''
+            ].filter(Boolean).join(' · ');
             html += `
                 <div class="voter-item">
-                    <span><strong>${v.rollNumber}</strong> — ${v.name}</span>
-                    <span class="v-status ${cls}">${status}</span>
+                    <div class="voter-info">
+                        <div><strong>${v.name}</strong></div>
+                        <div class="v-meta">${details}</div>
+                    </div>
+                    <div class="voter-actions">
+                        <span class="v-status ${cls}">${status}</span>
+                        <button class="btn btn-outline btn-xs edit-voter" data-id="${v.id}" title="Edit voter"><i class="fas fa-pen"></i></button>
+                    </div>
                 </div>
             `;
         }
         container.innerHTML = html;
+        container.querySelectorAll('.edit-voter').forEach(btn => {
+            btn.addEventListener('click', function() {
+                startEditVoter(this.dataset.id);
+            });
+        });
     }
 
     function renderStats() {
@@ -652,29 +783,35 @@
         // Show results per category
         let html = '';
         for (const cat of appData.categories) {
-            const nominees = getNomineesByCategory(cat.id);
-            if (nominees.length === 0) {
-                html += `<h5 style="margin-top:16px;color:var(--primary);">${cat.name}</h5>
-                        <div class="text-muted text-small">No nominees.</div>`;
-                continue;
-            }
-            html += `<h5 style="margin-top:16px;color:var(--primary);">${cat.name}</h5>`;
+            const groups = cat.houseSpecific ?
+                appData.houses.map(house => ({
+                    title: `${cat.name} - ${house.name}`,
+                    nominees: getNomineesByCategoryAndHouse(cat.id, house.id)
+                })) :
+                [{ title: cat.name, nominees: getNomineesByCategory(cat.id) }];
             const catResults = appData.results[cat.id] || {};
-            const maxVotes = Math.max(1, ...nominees.map(n => catResults[n.id] || 0));
-            for (const n of nominees) {
-                const v = catResults[n.id] || 0;
-                const pct = maxVotes > 0 ? Math.round((v / maxVotes) * 100) : 0;
-                html += `
-                    <div class="result-bar-wrap">
-                        <div class="rb-label">
-                            <span>${n.name}</span>
-                            <span><strong>${v}</strong> vote${v!==1?'s':''}</span>
+            for (const group of groups) {
+                html += `<h5 style="margin-top:16px;color:var(--primary);">${group.title}</h5>`;
+                if (group.nominees.length === 0) {
+                    html += '<div class="text-muted text-small">No nominees.</div>';
+                    continue;
+                }
+                const maxVotes = Math.max(1, ...group.nominees.map(n => catResults[n.id] || 0));
+                for (const n of group.nominees) {
+                    const v = catResults[n.id] || 0;
+                    const pct = maxVotes > 0 ? Math.round((v / maxVotes) * 100) : 0;
+                    html += `
+                        <div class="result-bar-wrap">
+                            <div class="rb-label">
+                                <span>${n.name}</span>
+                                <span><strong>${v}</strong> vote${v!==1?'s':''}</span>
+                            </div>
+                            <div class="rb-track">
+                                <div class="rb-fill ${cat.id.includes('girl')?'gold':''}" style="width:${pct}%;"></div>
+                            </div>
                         </div>
-                        <div class="rb-track">
-                            <div class="rb-fill ${cat.id.includes('girl')?'gold':''}" style="width:${pct}%;"></div>
-                        </div>
-                    </div>
-                `;
+                    `;
+                }
             }
         }
         container.innerHTML = html;
@@ -873,6 +1010,134 @@
         document.getElementById('addNomineeForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
+    function parseCsvLine(line) {
+        const values = [];
+        let current = '';
+        let inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+            const char = line[i];
+            const next = line[i + 1];
+            if (char === '"' && inQuotes && next === '"') {
+                current += '"';
+                i++;
+            } else if (char === '"') {
+                inQuotes = !inQuotes;
+            } else if (char === ',' && !inQuotes) {
+                values.push(current.trim());
+                current = '';
+            } else {
+                current += char;
+            }
+        }
+        values.push(current.trim());
+        return values;
+    }
+
+    function csvEscape(value) {
+        const text = String(value ?? '');
+        if (/[",\n\r]/.test(text)) {
+            return `"${text.replace(/"/g, '""')}"`;
+        }
+        return text;
+    }
+
+    function normalizeHeader(value) {
+        return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+    }
+
+    function buildVoterRecord(name, admissionNumber, className, section, rollNumber, houseId) {
+        return {
+            id: generateId(),
+            name: name.trim(),
+            admissionNumber: admissionNumber.trim(),
+            rollNumber: (rollNumber || '').trim(),
+            className: (className || '').trim(),
+            section: (section || '').trim(),
+            houseId: houseId || null,
+            hasVoted: false,
+            skipped: false,
+            pinHash: null,
+            voteEncrypted: null,
+            voteTimestamp: null
+        };
+    }
+
+    function addVoter(name, admissionNumber, className, section, rollNumber, houseId = null) {
+        if (!name || !admissionNumber) return false;
+        if (appData.voters.some(v => (v.admissionNumber || '').toLowerCase() === admissionNumber.toLowerCase())) {
+            showToast('A voter with this admission number already exists.', 'error');
+            return false;
+        }
+        if (houseId && !getHouseById(houseId)) {
+            showToast('Selected house was not found.', 'error');
+            return false;
+        }
+        appData.voters.push(buildVoterRecord(name, admissionNumber, className, section, rollNumber, houseId));
+        saveData();
+        renderAllSettings();
+        showToast(`Added voter ${name.trim()}.`, 'success');
+        return true;
+    }
+
+    function updateVoter(id, name, admissionNumber, className, section, rollNumber, houseId = null) {
+        const voter = getVoterById(id);
+        if (!voter || !name || !admissionNumber) return false;
+        if (appData.voters.some(v => v.id !== id && (v.admissionNumber || '').toLowerCase() === admissionNumber.toLowerCase())) {
+            showToast('A voter with this admission number already exists.', 'error');
+            return false;
+        }
+        if (houseId && !getHouseById(houseId)) {
+            showToast('Selected house was not found.', 'error');
+            return false;
+        }
+        voter.name = name.trim();
+        voter.admissionNumber = admissionNumber.trim();
+        voter.className = (className || '').trim();
+        voter.section = (section || '').trim();
+        voter.rollNumber = (rollNumber || '').trim();
+        voter.houseId = houseId || null;
+        saveData();
+        renderAllSettings();
+        showToast(`Updated voter ${voter.name}.`, 'success');
+        return true;
+    }
+
+    function setVoterFormMode(mode) {
+        const isEditing = mode === 'edit';
+        document.getElementById('voterFormTitle').innerHTML = isEditing ?
+            '<i class="fas fa-user-edit"></i> Edit Voter' :
+            '<i class="fas fa-user-plus"></i> Add Voter';
+        document.getElementById('voterSubmitBtn').innerHTML = isEditing ?
+            '<i class="fas fa-save"></i> Save Voter' :
+            '<i class="fas fa-plus"></i> Add Voter';
+        document.getElementById('cancelVoterEditBtn').style.display = isEditing ? 'inline-flex' : 'none';
+    }
+
+    function resetVoterForm() {
+        const form = document.getElementById('addVoterForm');
+        if (!form) return;
+        form.reset();
+        editingVoterId = null;
+        document.getElementById('voterHouseSelect').value = '';
+        setVoterFormMode('add');
+    }
+
+    function startEditVoter(id) {
+        const voter = getVoterById(id);
+        if (!voter) return;
+        editingVoterId = id;
+        populateHouseSelect('voterHouseSelect', true);
+        document.getElementById('voterName').value = voter.name || '';
+        document.getElementById('voterAdmissionNumber').value = voter.admissionNumber || voter.rollNumber || '';
+        document.getElementById('voterClass').value = voter.className || '';
+        document.getElementById('voterSection').value = voter.section || '';
+        document.getElementById('voterRollNumber').value = voter.rollNumber || '';
+        document.getElementById('voterHouseSelect').value = voter.houseId || '';
+        setVoterFormMode('edit');
+        document.getElementById('voterName').focus();
+        document.getElementById('addVoterForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
     function importVoters(csvText) {
         const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== '');
         if (lines.length === 0) {
@@ -882,43 +1147,84 @@
         let added = 0,
             skipped = 0;
         let startIdx = 0;
-        const first = lines[0].toLowerCase();
-        if (first.includes('rollnumber') || first.includes('roll') || first.includes('name')) {
+        let headerMap = null;
+        const first = parseCsvLine(lines[0]).map(normalizeHeader);
+        if (first.some(h => ['votername', 'admissionnumber', 'admissionno', 'voterid', 'rollnumber', 'name'].includes(h))) {
             startIdx = 1;
+            headerMap = {};
+            first.forEach((header, idx) => {
+                headerMap[header] = idx;
+            });
         }
         for (let i = startIdx; i < lines.length; i++) {
-            const parts = lines[i].split(',').map(s => s.trim());
+            const parts = parseCsvLine(lines[i]);
             if (parts.length < 2) continue;
-            const roll = parts[0];
-            const name = parts.slice(1, parts.length - 1).join(',').trim();
-            const houseId = parts[parts.length - 1] || null;
-            if (!roll || !name) continue;
-            if (appData.voters.some(v => v.rollNumber.toLowerCase() === roll.toLowerCase())) {
+            let name = '';
+            let admissionNumber = '';
+            let className = '';
+            let section = '';
+            let rollNumber = '';
+            let houseId = '';
+
+            if (headerMap) {
+                name = parts[headerMap.votername ?? headerMap.name] || '';
+                admissionNumber = parts[headerMap.admissionnumber ?? headerMap.admissionno ?? headerMap.voterid] || '';
+                className = parts[headerMap.class] || '';
+                section = parts[headerMap.section] || '';
+                rollNumber = parts[headerMap.rollnumber ?? headerMap.rollno ?? headerMap.roll] || '';
+                houseId = parts[headerMap.houseid] || '';
+                if (!admissionNumber) admissionNumber = rollNumber;
+            } else if (parts.length >= 6) {
+                [name, admissionNumber, className, section, rollNumber, houseId] = parts;
+            } else {
+                rollNumber = parts[0] || '';
+                admissionNumber = rollNumber;
+                name = parts.slice(1).join(',').trim();
+            }
+
+            if (!name || !admissionNumber) continue;
+            if (appData.voters.some(v => (v.admissionNumber || '').toLowerCase() === admissionNumber.toLowerCase())) {
                 skipped++;
                 continue;
             }
             // Validate houseId if provided
             if (houseId && !getHouseById(houseId)) {
-                showToast(`House "${houseId}" not found for voter ${roll}. Skipping.`, 'error');
+                showToast(`House "${houseId}" not found for voter ${admissionNumber}. Skipping.`, 'error');
                 skipped++;
                 continue;
             }
-            appData.voters.push({
-                id: generateId(),
-                rollNumber: roll,
-                name: name,
-                houseId: houseId,
-                hasVoted: false,
-                skipped: false,
-                pinHash: null,
-                voteEncrypted: null,
-                voteTimestamp: null
-            });
+            appData.voters.push(buildVoterRecord(name, admissionNumber, className, section, rollNumber, houseId));
             added++;
         }
         saveData();
         renderAllSettings();
         showToast(`Imported ${added} voters (${skipped} duplicates skipped).`, 'success');
+    }
+
+    function exportVoters() {
+        if (appData.voters.length === 0) {
+            showToast('No voters to export.', 'error');
+            return;
+        }
+        let csv = 'voter name,admission number,class,section,roll number,houseId\n';
+        for (const voter of appData.voters) {
+            csv += [
+                voter.name,
+                voter.admissionNumber || voter.rollNumber || '',
+                voter.className || '',
+                voter.section || '',
+                voter.rollNumber || '',
+                voter.houseId || ''
+            ].map(csvEscape).join(',') + '\n';
+        }
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `voters_${new Date().toISOString().slice(0,10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('Voters exported.', 'success');
     }
 
     function importNominees(csvText) {
@@ -1074,6 +1380,7 @@
     function clearAllVoters() {
         if (!confirm('Remove all voters? This will also clear all votes.')) return;
         appData.voters = [];
+        activeHomeVoterId = null;
         appData.results = {};
         for (const cat of appData.categories) {
             appData.results[cat.id] = {};
@@ -1088,7 +1395,7 @@
         // selections: { categoryId: nomineeId }
         const voter = getVoterByRoll(rollNumber);
         if (!voter) {
-            showToast('Voter not found. Please check your roll number.', 'error');
+            showToast('Voter not found. Please check your admission number.', 'error');
             return false;
         }
         if (voter.hasVoted && !voter.skipped) {
@@ -1110,15 +1417,17 @@
             return false;
         }
 
-        // Validate that all categories have a selection
-        for (const cat of appData.categories) {
+        // Validate that all eligible categories have a selection
+        for (const cat of getEligibleCategoriesForVoter(voter)) {
+            const eligibleNominees = getNomineesForCategoryAndVoter(cat, voter);
+            if (eligibleNominees.length === 0) continue;
             if (!selections[cat.id]) {
                 showToast(`Please select a nominee for ${cat.name}.`, 'error');
                 return false;
             }
             // Check if nominee exists in that category
             const nominee = getNomineeById(selections[cat.id]);
-            if (!nominee || nominee.categoryId !== cat.id) {
+            if (!nominee || nominee.categoryId !== cat.id || (cat.houseSpecific && nominee.houseId !== voter.houseId)) {
                 showToast(`Invalid nominee for ${cat.name}.`, 'error');
                 return false;
             }
@@ -1274,22 +1583,31 @@
             showToast('Results have been published. Voting is closed.', 'error');
             return;
         }
+        const voter = getActiveHomeVoter();
+        if (!voter) {
+            showToast('Please enter your admission number first.', 'error');
+            return;
+        }
         // Gather selections from homepage
         const selections = {};
         let allSelected = true;
         let reviewHtml = '';
-        for (const cat of appData.categories) {
+        for (const cat of getEligibleCategoriesForVoter(voter)) {
+            const nominees = getNomineesForCategoryAndVoter(cat, voter);
+            if (nominees.length === 0) continue;
             const radio = document.querySelector(`input[name="category_${cat.id}"]:checked`);
+            const house = cat.houseSpecific ? getHouseById(voter.houseId) : null;
+            const catName = house ? `${cat.name} - ${house.name}` : cat.name;
             if (radio) {
                 const nomineeId = radio.value;
                 const nominee = getNomineeById(nomineeId);
                 if (nominee) {
                     selections[cat.id] = nomineeId;
-                    reviewHtml += `<div><strong>${cat.name}:</strong> ${nominee.name}</div>`;
+                    reviewHtml += `<div><strong>${catName}:</strong> ${nominee.name}</div>`;
                 }
             } else {
                 allSelected = false;
-                reviewHtml += `<div><strong>${cat.name}:</strong> <span class="text-danger">Not selected</span></div>`;
+                reviewHtml += `<div><strong>${catName}:</strong> <span class="text-danger">Not selected</span></div>`;
             }
         }
         if (!allSelected) {
@@ -1299,7 +1617,8 @@
         // Store selections in a data attribute for the modal
         document.getElementById('voteModal').dataset.selections = JSON.stringify(selections);
         document.getElementById('voteReviewContainer').innerHTML = reviewHtml;
-        document.getElementById('voterIdInput').value = '';
+        document.getElementById('voterIdInput').value = voter.admissionNumber || voter.rollNumber || '';
+        document.getElementById('voterIdInput').readOnly = true;
         document.getElementById('voterPinInput').value = '';
         // Show/hide PIN field based on mode
         const mode = appData.settings.electionMode || 'optional_pin';
@@ -1415,6 +1734,7 @@
         populateCategorySelect();
         populateHouseSelect('categoryHouseSelect');
         populateHouseSelect('nomHouseSelect');
+        populateHouseSelect('voterHouseSelect', true);
         renderNomineeList();
         renderVoterList();
         renderStats();
@@ -1450,6 +1770,20 @@
         });
 
         document.getElementById('closeSettingsBtn').addEventListener('click', closeSettings);
+
+        document.getElementById('homeVoterForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const voterId = document.getElementById('homeVoterIdInput').value.trim();
+            const voter = getVoterByRoll(voterId);
+            if (!voter) {
+                activeHomeVoterId = null;
+                showToast('Voter not found. Please check your admission number.', 'error');
+                renderHomepage();
+                return;
+            }
+            activeHomeVoterId = voter.id;
+            renderHomepage();
+        });
 
         // ─── Password overlay ───
         document.getElementById('settingsPwSubmit').addEventListener('click', function() {
@@ -1490,7 +1824,7 @@
             const mode = appData.settings.electionMode || 'optional_pin';
 
             if (!roll) {
-                showToast('Please enter your roll number.', 'error');
+                showToast('Please enter your admission number.', 'error');
                 return;
             }
             if (mode === 'required_pin' && (!pin || pin.length < 4)) {
@@ -1542,7 +1876,7 @@
             e.preventDefault();
             const roll = document.getElementById('skipVoterId').value.trim();
             if (!roll) {
-                showToast('Please enter your roll number.', 'error');
+                showToast('Please enter your admission number.', 'error');
                 return;
             }
             const success = await skipVote(roll);
@@ -1721,6 +2055,31 @@ Blue House,#3498db`;
 
         document.getElementById('cancelNomineeEditBtn').addEventListener('click', resetNomineeForm);
 
+        // ─── Settings: Voters ───
+        document.getElementById('addVoterForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const name = document.getElementById('voterName').value.trim();
+            const admissionNumber = document.getElementById('voterAdmissionNumber').value.trim();
+            const className = document.getElementById('voterClass').value.trim();
+            const section = document.getElementById('voterSection').value.trim();
+            const rollNumber = document.getElementById('voterRollNumber').value.trim();
+            const houseId = document.getElementById('voterHouseSelect').value || null;
+            if (!name || !admissionNumber) {
+                showToast('Please fill in voter name and admission number.', 'error');
+                return;
+            }
+            const saved = editingVoterId ?
+                updateVoter(editingVoterId, name, admissionNumber, className, section, rollNumber, houseId) :
+                addVoter(name, admissionNumber, className, section, rollNumber, houseId);
+            if (saved) {
+                resetVoterForm();
+                renderVoterList();
+                renderStats();
+            }
+        });
+
+        document.getElementById('cancelVoterEditBtn').addEventListener('click', resetVoterForm);
+
         // ─── Settings: CSV Import ───
         const dropArea = document.getElementById('csvDropArea');
         const fileInput = document.getElementById('csvFileInput');
@@ -1761,12 +2120,12 @@ Blue House,#3498db`;
         }
 
         document.getElementById('sampleCsvBtn').addEventListener('click', function() {
-            const sample = `rollNumber,name
-1001,Emma Williams
-1002,James Rodriguez
-1003,Sophia Chen
-1004,Michael Okafor
-1005,Olivia Smith`;
+            const sample = `voter name,admission number,class,section,roll number,houseId
+Emma Williams,ADM1001,10,A,1,red
+James Rodriguez,ADM1002,10,A,2,green
+Sophia Chen,ADM1003,10,B,1,yellow
+Michael Okafor,ADM1004,11,A,5,blue
+Olivia Smith,ADM1005,11,B,8,red`;
             const blob = new Blob([sample], { type: 'text/csv' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -1776,6 +2135,7 @@ Blue House,#3498db`;
             URL.revokeObjectURL(url);
         });
 
+        document.getElementById('exportVotersBtn').addEventListener('click', exportVoters);
         document.getElementById('clearVotersBtn').addEventListener('click', clearAllVoters);
 
         // ─── Settings: Nominees CSV Import/Export ───

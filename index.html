@@ -27,7 +27,18 @@
 
         <!-- HOMEPAGE -->
         <section class="homepage" id="homepage">
+            <div class="home-voter-card" id="homeVoterCard">
+                <form id="homeVoterForm" class="home-voter-form">
+                    <div>
+                        <label>Admission Number / Voter ID</label>
+                        <input type="text" id="homeVoterIdInput" required placeholder="e.g. ADM1001" />
+                    </div>
+                    <button type="submit" class="btn btn-primary"><i class="fas fa-search"></i> Show Ballot</button>
+                </form>
+                <div class="home-voter-active hidden" id="homeVoterActive"></div>
+            </div>
             <div id="categoriesContainer"></div>
+            <div class="attendance-stats" id="attendanceStats"></div>
 
             <div class="homepage-actions">
                 <button class="btn btn-outline" id="skipVoteBtn" style="display:none;"><i class="fas fa-times-circle"></i> Skip Voting</button>
@@ -230,16 +241,56 @@
             <div class="settings-panel" id="tabVoters">
                 <div class="panel-card">
                     <h4><i class="fas fa-file-import"></i> Import Voters (CSV)</h4>
-                    <p class="text-muted text-small mb-8">Format: <code>rollNumber,name</code> (one per line, or CSV with header). Duplicates will be skipped.</p>
+                    <p class="text-muted text-small mb-8">Format: <code>voter name,admission number,class,section,roll number,houseId</code> (one per line, or CSV with header). Duplicates will be skipped.</p>
                     <div class="csv-upload-area" id="csvDropArea">
                         <i class="fas fa-cloud-upload-alt" style="font-size:2rem;color:var(--primary-light);"></i>
                         <p style="margin:8px 0 4px;"><strong>Click or drag a CSV file</strong></p>
-                        <p class="text-muted text-small">.csv or .txt with rollNumber,name</p>
+                        <p class="text-muted text-small">.csv or .txt with voter details</p>
                         <input type="file" id="csvFileInput" accept=".csv,.txt" />
                     </div>
                     <div class="flex mt-12">
                         <button class="btn btn-sm btn-outline" id="sampleCsvBtn"><i class="fas fa-download"></i> Download Sample CSV</button>
+                        <button class="btn btn-sm btn-outline" id="exportVotersBtn"><i class="fas fa-file-export"></i> Export Voters (CSV)</button>
                     </div>
+                </div>
+                <div class="panel-card">
+                    <h4 id="voterFormTitle"><i class="fas fa-user-plus"></i> Add Voter</h4>
+                    <form id="addVoterForm">
+                        <div class="form-row">
+                            <div>
+                                <label>Voter Name <span class="required">*</span></label>
+                                <input type="text" id="voterName" required placeholder="e.g. Emma Williams" />
+                            </div>
+                            <div>
+                                <label>Admission Number / Voter ID <span class="required">*</span></label>
+                                <input type="text" id="voterAdmissionNumber" required placeholder="e.g. ADM1001" />
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div>
+                                <label>Class</label>
+                                <input type="text" id="voterClass" placeholder="e.g. 10" />
+                            </div>
+                            <div>
+                                <label>Section</label>
+                                <input type="text" id="voterSection" placeholder="e.g. A" />
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div>
+                                <label>Roll Number</label>
+                                <input type="text" id="voterRollNumber" placeholder="e.g. 23" />
+                            </div>
+                            <div>
+                                <label>House</label>
+                                <select id="voterHouseSelect"></select>
+                            </div>
+                        </div>
+                        <div class="flex mt-12">
+                            <button type="submit" class="btn btn-primary" id="voterSubmitBtn"><i class="fas fa-plus"></i> Add Voter</button>
+                            <button type="button" class="btn btn-outline" id="cancelVoterEditBtn" style="display:none;"><i class="fas fa-times"></i> Cancel</button>
+                        </div>
+                    </form>
                 </div>
                 <div class="panel-card">
                     <h4><i class="fas fa-users"></i> Voter List <span id="voterCountBadge" class="badge-count" style="background:var(--primary-light);color:#fff;padding:2px 14px;border-radius:30px;font-size:0.8rem;">0</span></h4>
@@ -278,8 +329,8 @@
             <div class="modal-sub" id="voteModalSub">Please review your selections for each category.</div>
             <div id="voteReviewContainer"></div>
             <form id="voteForm">
-                <label>Your Roll Number / Voter ID <span class="required">*</span></label>
-                <input type="text" id="voterIdInput" required placeholder="e.g. 12345" />
+                <label>Your Admission Number / Voter ID <span class="required">*</span></label>
+                <input type="text" id="voterIdInput" required placeholder="e.g. ADM1001" />
                 <div id="pinFieldWrap">
                     <label>PIN <span id="pinRequiredStar" class="required">*</span></label>
                     <input type="password" id="voterPinInput" placeholder="4–8 digit PIN" />
@@ -300,8 +351,8 @@
             <h3><i class="fas fa-search"></i> Verify Your Vote</h3>
             <div class="modal-sub">Enter your voter ID and PIN to see your votes.</div>
             <form id="verifyForm">
-                <label>Roll Number / Voter ID <span class="required">*</span></label>
-                <input type="text" id="verifyVoterId" required placeholder="e.g. 12345" />
+                <label>Admission Number / Voter ID <span class="required">*</span></label>
+                <input type="text" id="verifyVoterId" required placeholder="e.g. ADM1001" />
                 <label>PIN <span class="required">*</span></label>
                 <input type="password" id="verifyPin" required placeholder="Your voting PIN" />
                 <div class="btn-row">
@@ -320,8 +371,8 @@
             <h3><i class="fas fa-times-circle"></i> Skip Voting</h3>
             <div class="modal-sub">You are choosing to skip voting in this election. This action cannot be undone.</div>
             <form id="skipForm">
-                <label>Your Roll Number / Voter ID <span class="required">*</span></label>
-                <input type="text" id="skipVoterId" required placeholder="e.g. 12345" />
+                <label>Your Admission Number / Voter ID <span class="required">*</span></label>
+                <input type="text" id="skipVoterId" required placeholder="e.g. ADM1001" />
                 <div class="btn-row">
                     <button type="submit" class="btn btn-danger"><i class="fas fa-check"></i> Confirm Skip</button>
                     <button type="button" class="btn btn-outline" data-close="skipModal">Cancel</button>
