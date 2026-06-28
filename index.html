@@ -192,7 +192,7 @@
                     </div>
                 </div>
                 <div class="panel-card">
-                    <h4><i class="fas fa-user-plus"></i> Add Nominee</h4>
+                    <h4 id="nomineeFormTitle"><i class="fas fa-user-plus"></i> Add Nominee</h4>
                     <form id="addNomineeForm">
                         <div class="form-row">
                             <div>
@@ -214,7 +214,10 @@
                         <textarea id="nomProblems" rows="2" placeholder="What problems do you see? What are your promises?"></textarea>
                         <label>Why choose me?</label>
                         <textarea id="nomWhy" rows="2" placeholder="Your unique value proposition…"></textarea>
-                        <button type="submit" class="btn btn-primary mt-12"><i class="fas fa-plus"></i> Add Nominee</button>
+                        <div class="flex mt-12">
+                            <button type="submit" class="btn btn-primary" id="nomineeSubmitBtn"><i class="fas fa-plus"></i> Add Nominee</button>
+                            <button type="button" class="btn btn-outline" id="cancelNomineeEditBtn" style="display:none;"><i class="fas fa-times"></i> Cancel</button>
+                        </div>
                     </form>
                 </div>
                 <div class="panel-card">

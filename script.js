@@ -53,6 +53,7 @@
     }
 
     let appData = null;
+    let editingNomineeId = null;
 
     function loadData() {
         try {
@@ -557,12 +558,18 @@
                         <div class="n-cat">${catName} · ${votes} vote${votes!==1?'s':''}</div>
                     </div>
                     <div class="n-actions">
+                        <button class="btn btn-outline btn-xs edit-nominee" data-id="${n.id}" title="Edit nominee"><i class="fas fa-pen"></i></button>
                         <button class="btn btn-danger btn-xs remove-nominee" data-id="${n.id}"><i class="fas fa-trash"></i></button>
                     </div>
                 </div>
             `;
         }
         container.innerHTML = html;
+        container.querySelectorAll('.edit-nominee').forEach(btn => {
+            btn.addEventListener('click', function() {
+                startEditNominee(this.dataset.id);
+            });
+        });
         container.querySelectorAll('.remove-nominee').forEach(btn => {
             btn.addEventListener('click', function() {
                 if (confirm('Remove this nominee and all their votes?')) {
@@ -744,7 +751,7 @@
             showToast('A nominee with this name already exists in this category.', 'error');
             return false;
         }
-        appData.nominees.push({
+        const nominee = {
             id: generateId(),
             name: name.trim(),
             categoryId: categoryId,
@@ -755,11 +762,12 @@
                 promises: problems || '',
                 whyMe: whyMe || ''
             }
-        });
+        };
+        appData.nominees.push(nominee);
         // Initialize results for this nominee (just in case)
         for (const catId in appData.results) {
-            if (!appData.results[catId][this.id]) {
-                appData.results[catId][this.id] = 0;
+            if (appData.results[catId][nominee.id] === undefined) {
+                appData.results[catId][nominee.id] = 0;
             }
         }
         saveData();
@@ -768,9 +776,47 @@
         return true;
     }
 
+    function updateNominee(id, name, categoryId, photo, problems, whyMe, houseId = null) {
+        const nominee = getNomineeById(id);
+        if (!nominee || !name || !categoryId) return false;
+        if (appData.nominees.some(n => n.id !== id && n.name.toLowerCase() === name.toLowerCase() && n.categoryId === categoryId)) {
+            showToast('A nominee with this name already exists in this category.', 'error');
+            return false;
+        }
+        const previousCategoryId = nominee.categoryId;
+        nominee.name = name.trim();
+        nominee.categoryId = categoryId;
+        nominee.houseId = houseId;
+        nominee.photo = photo || '';
+        nominee.manifesto = {
+            problems: problems || '',
+            promises: problems || '',
+            whyMe: whyMe || ''
+        };
+        if (!appData.results[categoryId]) {
+            appData.results[categoryId] = {};
+        }
+        if (previousCategoryId !== categoryId) {
+            const previousVotes = appData.results[previousCategoryId]?.[id] || 0;
+            if (appData.results[previousCategoryId]) {
+                delete appData.results[previousCategoryId][id];
+            }
+            appData.results[categoryId][id] = (appData.results[categoryId][id] || 0) + previousVotes;
+        } else if (appData.results[categoryId][id] === undefined) {
+            appData.results[categoryId][id] = 0;
+        }
+        saveData();
+        renderAllSettings();
+        showToast(`Updated ${nominee.name}`, 'success');
+        return true;
+    }
+
     function removeNominee(id) {
         const nominee = getNomineeById(id);
         if (!nominee) return;
+        if (editingNomineeId === id) {
+            resetNomineeForm();
+        }
         appData.nominees = appData.nominees.filter(n => n.id !== id);
         // Remove from results
         for (const catId in appData.results) {
@@ -779,6 +825,52 @@
         saveData();
         renderAllSettings();
         showToast(`Removed ${nominee.name}`, 'info');
+    }
+
+    function setNomineeFormMode(mode) {
+        const isEditing = mode === 'edit';
+        document.getElementById('nomineeFormTitle').innerHTML = isEditing ?
+            '<i class="fas fa-user-edit"></i> Edit Nominee' :
+            '<i class="fas fa-user-plus"></i> Add Nominee';
+        document.getElementById('nomineeSubmitBtn').innerHTML = isEditing ?
+            '<i class="fas fa-save"></i> Save Nominee' :
+            '<i class="fas fa-plus"></i> Add Nominee';
+        document.getElementById('cancelNomineeEditBtn').style.display = isEditing ? 'inline-flex' : 'none';
+    }
+
+    function resetNomineeForm() {
+        const form = document.getElementById('addNomineeForm');
+        if (!form) return;
+        form.reset();
+        editingNomineeId = null;
+        document.getElementById('nomPhoto').value = '';
+        document.getElementById('nomProblems').value = '';
+        document.getElementById('nomWhy').value = '';
+        document.getElementById('nomineeHouseSelectWrap').style.display = 'none';
+        setNomineeFormMode('add');
+    }
+
+    function startEditNominee(id) {
+        const nominee = getNomineeById(id);
+        if (!nominee) return;
+        editingNomineeId = id;
+        document.getElementById('nomName').value = nominee.name || '';
+        document.getElementById('nomCategory').value = nominee.categoryId || '';
+        document.getElementById('nomPhoto').value = nominee.photo || '';
+        document.getElementById('nomProblems').value = nominee.manifesto?.problems || nominee.manifesto?.promises || '';
+        document.getElementById('nomWhy').value = nominee.manifesto?.whyMe || '';
+        const cat = getCategoryById(nominee.categoryId);
+        const wrap = document.getElementById('nomineeHouseSelectWrap');
+        if (cat && cat.houseSpecific) {
+            wrap.style.display = 'block';
+            populateHouseSelect('nomHouseSelect');
+            document.getElementById('nomHouseSelect').value = nominee.houseId || '';
+        } else {
+            wrap.style.display = 'none';
+        }
+        setNomineeFormMode('edit');
+        document.getElementById('nomName').focus();
+        document.getElementById('addNomineeForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     function importVoters(csvText) {
@@ -1617,16 +1709,17 @@ Blue House,#3498db`;
                 showToast('Please select a house for this house-specific category.', 'error');
                 return;
             }
-            if (addNominee(name, categoryId, photo, problems, why, houseId)) {
-                this.reset();
-                document.getElementById('nomPhoto').value = '';
-                document.getElementById('nomProblems').value = '';
-                document.getElementById('nomWhy').value = '';
-                document.getElementById('nomineeHouseSelectWrap').style.display = 'none';
+            const saved = editingNomineeId ?
+                updateNominee(editingNomineeId, name, categoryId, photo, problems, why, houseId) :
+                addNominee(name, categoryId, photo, problems, why, houseId);
+            if (saved) {
+                resetNomineeForm();
                 renderNomineeList();
                 renderStats();
             }
         });
+
+        document.getElementById('cancelNomineeEditBtn').addEventListener('click', resetNomineeForm);
 
         // ─── Settings: CSV Import ───
         const dropArea = document.getElementById('csvDropArea');
@@ -1725,10 +1818,12 @@ Blue House,#3498db`;
         }
 
         document.getElementById('sampleNomineeCsvBtn').addEventListener('click', function() {
-            const sample = `name,categoryId,photoUrl,problems,whyMe
-Alex Johnson,head_boy,https://example.com/photo.jpg,Improve school facilities,I am dedicated and experienced
-Emma Williams,head_girl,,Promote student wellness,I care about every student
-James Rodriguez,deputy_head_boy,,Organize better events,I have great leadership skills`;
+            const sample = `name,categoryId,houseId,photoUrl,problems,whyMe
+Alex Johnson,head_boy,,https://cdn-icons-png.magnific.com/256/1667/1667349.png,Improve school facilities,I am dedicated and experienced
+Sophia Chen,head_girl,,https://voca-land.sgp1.cdn.digitaloceanspaces.com/-1/1711425182353/ddab77a07a14bee0825b053f68278797.png,Improve school facilities,I am dedicated and experienced
+Emma Williams,house_captain,red,,Promote student wellness,I care about every student
+Olivia Smith,house_captain,blue,,Organize better events,I have great leadership skills
+James Rodriguez,deputy_head_boy,,,Organize better events,I have great leadership skills`;
             const blob = new Blob([sample], { type: 'text/csv' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
