@@ -47,6 +47,7 @@
                 adminPasswordHash: '',
                 showSkipButton: true,
                 showVerifyButton: true,
+                lastHomeHouseId: null,
             },
             results: {} // will be computed
         };
@@ -56,6 +57,7 @@
     let editingNomineeId = null;
     let editingVoterId = null;
     let activeHomeVoterId = null;
+    let activeHomeHouseId = null;
 
     function loadData() {
         try {
@@ -82,6 +84,7 @@
                 if (parsed.settings.resultsPublished === undefined) parsed.settings.resultsPublished = false;
                 if (parsed.settings.showSkipButton === undefined) parsed.settings.showSkipButton = true;
                 if (parsed.settings.showVerifyButton === undefined) parsed.settings.showVerifyButton = true;
+                if (parsed.settings.lastHomeHouseId === undefined) parsed.settings.lastHomeHouseId = null;
                 if (!parsed.settings.adminPasswordHash) {
                     parsed.settings.adminPasswordHash = hashString('admin123');
                 }
@@ -105,11 +108,13 @@
                     }
                 }
                 appData = parsed;
+                activeHomeHouseId = appData.settings.lastHomeHouseId || null;
                 return;
             }
         } catch (_) { /* ignore */ }
         appData = getDefaultData();
         appData.settings.adminPasswordHash = hashString('admin123');
+        appData.settings.lastHomeHouseId = null;
         saveData();
     }
 
@@ -201,16 +206,27 @@
         return activeHomeVoterId ? getVoterById(activeHomeVoterId) : null;
     }
 
+    function getEffectiveHouseIdForVoter(voter) {
+        if (!voter) return null;
+        return voter.houseId || (voter.id === activeHomeVoterId ? activeHomeHouseId : null);
+    }
+
+    function hasHouseSpecificCategories() {
+        return appData.categories.some(cat => cat.houseSpecific);
+    }
+
     function getEligibleCategoriesForVoter(voter) {
-        return appData.categories.filter(cat => !cat.houseSpecific || !!voter?.houseId);
+        const houseId = getEffectiveHouseIdForVoter(voter);
+        return appData.categories.filter(cat => !cat.houseSpecific || !!houseId);
     }
 
     function getNomineesForCategoryAndVoter(category, voter) {
         if (!category.houseSpecific) {
             return getNomineesByCategory(category.id);
         }
-        if (!voter?.houseId) return [];
-        return getNomineesByCategoryAndHouse(category.id, voter.houseId);
+        const houseId = getEffectiveHouseIdForVoter(voter);
+        if (!houseId) return [];
+        return getNomineesByCategoryAndHouse(category.id, houseId);
     }
 
     function getNomineesByCategory(categoryId) {
@@ -379,13 +395,22 @@
             renderAttendanceStats();
             return;
         }
+        const effectiveHouseId = getEffectiveHouseIdForVoter(voter);
+        if (hasHouseSpecificCategories() && !effectiveHouseId) {
+            container.innerHTML =
+                '<div class="text-center text-muted" style="padding:32px 0;">Select the voter house above to see house-wise nominees.</div>';
+            updateButtonVisibility();
+            renderAttendanceBadge();
+            renderAttendanceStats();
+            return;
+        }
 
         let html = '';
         let hasNominees = false;
         const categories = getEligibleCategoriesForVoter(voter);
         for (const cat of categories) {
             const nominees = getNomineesForCategoryAndVoter(cat, voter);
-            const house = cat.houseSpecific ? getHouseById(voter.houseId) : null;
+            const house = cat.houseSpecific ? getHouseById(effectiveHouseId) : null;
             const heading = house ? `${cat.name} - ${house.name}` : cat.name;
             if (nominees.length === 0) {
                 html += `
@@ -478,7 +503,11 @@
             active.innerHTML = '';
             return;
         }
-        const house = voter.houseId ? getHouseById(voter.houseId) : null;
+        const effectiveHouseId = getEffectiveHouseIdForVoter(voter);
+        const house = effectiveHouseId ? getHouseById(effectiveHouseId) : null;
+        const houseOptions = appData.houses.map(h =>
+            `<option value="${h.id}" ${h.id === activeHomeHouseId ? 'selected' : ''}>${h.name}</option>`
+        ).join('');
         form.style.display = 'none';
         active.classList.remove('hidden');
         active.innerHTML = `
@@ -486,8 +515,26 @@
                 <strong>${voter.name}</strong>
                 <span class="text-muted text-small">ID: ${voter.admissionNumber || voter.rollNumber || ''}${house ? ` · ${house.name}` : ''}</span>
             </div>
+            ${voter.houseId ? '' : `
+                <label class="home-house-select">
+                    <span>House</span>
+                    <select id="homeHouseSelect">
+                        <option value="">Select House</option>
+                        ${houseOptions}
+                    </select>
+                </label>
+            `}
             <button type="button" class="btn btn-sm btn-outline" id="changeHomeVoterBtn"><i class="fas fa-sync-alt"></i> Change Voter</button>
         `;
+        const houseSelect = document.getElementById('homeHouseSelect');
+        if (houseSelect) {
+            houseSelect.addEventListener('change', function() {
+                activeHomeHouseId = this.value || null;
+                appData.settings.lastHomeHouseId = activeHomeHouseId;
+                saveData();
+                renderHomepage();
+            });
+        }
         document.getElementById('changeHomeVoterBtn').addEventListener('click', function() {
             activeHomeVoterId = null;
             document.getElementById('homeVoterIdInput').value = '';
@@ -551,8 +598,10 @@
         const showVerifySetting = appData.settings.showVerifyButton !== false;
         // Verify button is only relevant if PIN is used (optional or required)
         const showVerify = (mode !== 'no_pin') && showVerifySetting;
+        const voter = getActiveHomeVoter();
+        const canCast = !!voter && (!hasHouseSpecificCategories() || !!getEffectiveHouseIdForVoter(voter));
 
-        document.getElementById('castVoteBtn').style.display = getActiveHomeVoter() ? 'inline-flex' : 'none';
+        document.getElementById('castVoteBtn').style.display = canCast ? 'inline-flex' : 'none';
         document.getElementById('skipVoteBtn').style.display = showSkip ? 'inline-flex' : 'none';
         document.getElementById('verifyVoteBtn').style.display = showVerify ? 'inline-flex' : 'none';
     }
@@ -1381,6 +1430,8 @@
         if (!confirm('Remove all voters? This will also clear all votes.')) return;
         appData.voters = [];
         activeHomeVoterId = null;
+        activeHomeHouseId = null;
+        appData.settings.lastHomeHouseId = null;
         appData.results = {};
         for (const cat of appData.categories) {
             appData.results[cat.id] = {};
@@ -1417,6 +1468,12 @@
             return false;
         }
 
+        const effectiveHouseId = getEffectiveHouseIdForVoter(voter);
+        if (hasHouseSpecificCategories() && !effectiveHouseId) {
+            showToast('Please select the voter house before voting.', 'error');
+            return false;
+        }
+
         // Validate that all eligible categories have a selection
         for (const cat of getEligibleCategoriesForVoter(voter)) {
             const eligibleNominees = getNomineesForCategoryAndVoter(cat, voter);
@@ -1427,7 +1484,7 @@
             }
             // Check if nominee exists in that category
             const nominee = getNomineeById(selections[cat.id]);
-            if (!nominee || nominee.categoryId !== cat.id || (cat.houseSpecific && nominee.houseId !== voter.houseId)) {
+            if (!nominee || nominee.categoryId !== cat.id || (cat.houseSpecific && nominee.houseId !== effectiveHouseId)) {
                 showToast(`Invalid nominee for ${cat.name}.`, 'error');
                 return false;
             }
@@ -1588,6 +1645,11 @@
             showToast('Please enter your admission number first.', 'error');
             return;
         }
+        const effectiveHouseId = getEffectiveHouseIdForVoter(voter);
+        if (hasHouseSpecificCategories() && !effectiveHouseId) {
+            showToast('Please select the voter house first.', 'error');
+            return;
+        }
         // Gather selections from homepage
         const selections = {};
         let allSelected = true;
@@ -1596,7 +1658,7 @@
             const nominees = getNomineesForCategoryAndVoter(cat, voter);
             if (nominees.length === 0) continue;
             const radio = document.querySelector(`input[name="category_${cat.id}"]:checked`);
-            const house = cat.houseSpecific ? getHouseById(voter.houseId) : null;
+            const house = cat.houseSpecific ? getHouseById(effectiveHouseId) : null;
             const catName = house ? `${cat.name} - ${house.name}` : cat.name;
             if (radio) {
                 const nomineeId = radio.value;

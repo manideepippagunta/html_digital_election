@@ -314,6 +314,21 @@ body {
     display: block;
     color: var(--primary);
 }
+.home-house-select {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    min-width: 210px;
+}
+.home-house-select span {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--text-light);
+}
+.home-house-select select {
+    min-width: 140px;
+}
 
 .homepage-actions {
     display: flex;
