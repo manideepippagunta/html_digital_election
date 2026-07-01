@@ -58,53 +58,45 @@
     let editingVoterId = null;
     let activeHomeVoterId = null;
     let activeHomeHouseId = null;
-    let isBackendAvailable = false;
-
-    function isOffline() {
-        return !isBackendAvailable || sessionStorage.getItem('adminToken') === 'local_offline_token';
-    }
-
-    // Helper to get auth header
-    function getAuthHeader() {
-        const token = sessionStorage.getItem('adminToken');
-        return token ? { 'Authorization': 'Bearer ' + token } : {};
-    }
 
     async function loadData() {
-        // 1) Try MySQL backend API
-        try {
-            const res = await fetch('/api/data');
-            if (res.ok) {
-                const parsed = await res.json();
-                appData = parsed;
-                activeHomeHouseId = appData.settings.lastHomeHouseId || null;
-                isBackendAvailable = true;
-                return;
-            }
-        } catch (_) { /* ignore – server not available */ }
-        isBackendAvailable = false;
-        // 2) Fall back to localStorage (offline / no MySQL)
         try {
             const stored = localStorage.getItem(STORAGE_KEY);
             if (stored) {
                 appData = JSON.parse(stored);
                 activeHomeHouseId = appData.settings?.lastHomeHouseId || null;
+                migrateVoterIds();
                 return;
             }
         } catch (_) { /* ignore */ }
-        // 3) Nothing found – use defaults
-        if (!appData) {
-            appData = getDefaultData();
-            activeHomeHouseId = null;
+        appData = getDefaultData();
+        activeHomeHouseId = null;
+    }
+
+    function migrateVoterIds() {
+        if (!appData || !appData.voters) return;
+        let changed = false;
+        for (const v of appData.voters) {
+            const rStr = (v.rollNumber || '').trim();
+            const cStr = (v.className || '').trim();
+            const sStr = (v.section || '').trim();
+            const adm = (v.admissionNumber || '').trim();
+            if (adm.toLowerCase() === '1' + cStr.toLowerCase() + sStr.toLowerCase() && rStr && rStr !== '1') {
+                v.admissionNumber = rStr + cStr + sStr;
+                changed = true;
+            }
+        }
+        if (changed) {
+            saveData();
         }
     }
 
     function saveData() {
-        // Always persist to localStorage so the app works offline (no MySQL).
         try {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(appData));
         } catch (_) { /* storage full or unavailable */ }
     }
+
 
     function hashString(str) {
         let hash = 0;
@@ -317,22 +309,6 @@
     // House CRUD functions
     async function addHouse(name, color) {
         if (!name.trim()) return false;
-        // Try API first, fall back to localStorage
-        try {
-            const res = await fetch('/api/houses', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-                body: JSON.stringify({ name: name.trim(), color: color || '#3498db' })
-            });
-            const data = await res.json();
-            if (res.ok) {
-                await loadData();
-                renderAllSettings();
-                showToast(`House "${name.trim()}" added.`, 'success');
-                return true;
-            }
-        } catch (_) { /* offline – use localStorage */ }
-        // localStorage fallback
         if (appData.houses.find(h => h.name.toLowerCase() === name.trim().toLowerCase())) {
             showToast('House already exists.', 'error');
             return false;
@@ -345,18 +321,6 @@
     }
 
     async function removeHouse(id) {
-        try {
-            const res = await fetch('/api/houses/' + encodeURIComponent(id), {
-                method: 'DELETE', headers: getAuthHeader()
-            });
-            if (res.ok) {
-                await loadData();
-                renderAllSettings();
-                showToast('House removed.', 'info');
-                return true;
-            }
-        } catch (_) { /* offline – use localStorage */ }
-        // localStorage fallback
         appData.houses = appData.houses.filter(h => h.id !== id);
         saveData();
         renderAllSettings();
@@ -366,24 +330,10 @@
 
     async function resetDefaultHouses() {
         if (!confirm('Reset to default houses? This will remove all current houses.')) return;
-        try {
-            // Remove existing
-            for (const h of appData.houses) {
-                await fetch('/api/houses/' + encodeURIComponent(h.id), { method: 'DELETE', headers: getAuthHeader() });
-            }
-            // Seed defaults
-            const res = await fetch('/api/import', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-                body: JSON.stringify({ type: 'houses', data: getDefaultHouses(), overwrite: true })
-            });
-            if (!res.ok) throw new Error();
-            await loadData();
-            renderAllSettings();
-            showToast('Houses reset to default.', 'success');
-        } catch (err) {
-            showToast('Error resetting default houses.', 'error');
-        }
+        appData.houses = getDefaultHouses();
+        saveData();
+        renderAllSettings();
+        showToast('Houses reset to default.', 'success');
     }
 
     function getVoteCountForNominee(nomineeId) {
@@ -1171,20 +1121,6 @@
 
     async function addCategory(name, houseSpecific = false, houseId = null) {
         if (!name.trim()) return false;
-        try {
-            const res = await fetch('/api/categories', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-                body: JSON.stringify({ name: name.trim(), houseSpecific, houseId })
-            });
-            if (res.ok) {
-                await loadData();
-                renderAllSettings();
-                showToast(`Category "${name.trim()}" added.`, 'success');
-                return true;
-            }
-        } catch (_) { /* offline – use localStorage */ }
-        // localStorage fallback
         if (appData.categories.find(c => c.name.toLowerCase() === name.trim().toLowerCase())) {
             showToast('Category already exists.', 'error');
             return false;
@@ -1197,18 +1133,6 @@
     }
 
     async function removeCategory(id) {
-        try {
-            const res = await fetch('/api/categories/' + encodeURIComponent(id), {
-                method: 'DELETE', headers: getAuthHeader()
-            });
-            if (res.ok) {
-                await loadData();
-                renderAllSettings();
-                showToast('Category removed.', 'info');
-                return;
-            }
-        } catch (_) { /* offline – use localStorage */ }
-        // localStorage fallback
         appData.categories = appData.categories.filter(c => c.id !== id);
         appData.nominees = appData.nominees.filter(n => n.categoryId !== id);
         if (appData.results) delete appData.results[id];
@@ -1219,40 +1143,17 @@
 
     async function resetDefaultCategories() {
         if (!confirm('Reset to default categories? This will remove all current categories and their nominees.')) return;
-        try {
-            for (const c of appData.categories) {
-                await fetch('/api/categories/' + encodeURIComponent(c.id), { method: 'DELETE', headers: getAuthHeader() });
-            }
-            const res = await fetch('/api/import', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-                body: JSON.stringify({ type: 'categories', data: getDefaultCategories(), overwrite: true })
-            });
-            if (!res.ok) throw new Error();
-            await loadData();
-            renderAllSettings();
-            showToast('Categories reset to default.', 'success');
-        } catch (err) {
-            showToast('Error resetting default categories.', 'error');
-        }
+        appData.categories = getDefaultCategories();
+        appData.nominees = appData.nominees.filter(n => appData.categories.find(c => c.id === n.categoryId));
+        appData.results = {};
+        for (const cat of appData.categories) appData.results[cat.id] = {};
+        saveData();
+        renderAllSettings();
+        showToast('Categories reset to default.', 'success');
     }
 
     async function addNominee(name, categoryId, photo, problems, whyMe, houseId = null) {
         if (!name || !categoryId) return false;
-        try {
-            const res = await fetch('/api/nominees', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-                body: JSON.stringify({ name: name.trim(), category_id: categoryId, house_id: houseId, photo, problems, whyMe })
-            });
-            if (res.ok) {
-                await loadData();
-                renderAllSettings();
-                showToast(`Added ${name} to ${getCategoryById(categoryId)?.name || ''}`, 'success');
-                return true;
-            }
-        } catch (_) { /* offline – use localStorage */ }
-        // localStorage fallback
         appData.nominees.push({
             id: generateId(), name: name.trim(), categoryId, houseId: houseId || null,
             photo: photo || '', manifesto: { problems: problems || '', whyMe: whyMe || '' }
@@ -1265,20 +1166,6 @@
 
     async function updateNominee(id, name, categoryId, photo, problems, whyMe, houseId = null) {
         if (!name || !categoryId) return false;
-        try {
-            const res = await fetch('/api/nominees/' + encodeURIComponent(id), {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-                body: JSON.stringify({ name: name.trim(), category_id: categoryId, house_id: houseId, photo, problems, whyMe })
-            });
-            if (res.ok) {
-                await loadData();
-                renderAllSettings();
-                showToast(`Updated nominee ${name}`, 'success');
-                return true;
-            }
-        } catch (_) { /* offline – use localStorage */ }
-        // localStorage fallback
         const idx = appData.nominees.findIndex(n => n.id === id);
         if (idx === -1) return false;
         appData.nominees[idx] = { ...appData.nominees[idx], name: name.trim(), categoryId,
@@ -1294,18 +1181,6 @@
         const nominee = getNomineeById(id);
         if (!nominee) return;
         if (editingNomineeId === id) resetNomineeForm();
-        try {
-            const res = await fetch('/api/nominees/' + encodeURIComponent(id), {
-                method: 'DELETE', headers: getAuthHeader()
-            });
-            if (res.ok) {
-                await loadData();
-                renderAllSettings();
-                showToast(`Removed ${nominee.name}`, 'info');
-                return;
-            }
-        } catch (_) { /* offline – use localStorage */ }
-        // localStorage fallback
         appData.nominees = appData.nominees.filter(n => n.id !== id);
         saveData();
         renderAllSettings();
@@ -1467,13 +1342,23 @@
     }
 
     function buildVoterRecord(name, admissionNumber, className, section, rollNumber, houseId) {
+        let finalAdmission = admissionNumber.trim();
+        const rStr = (rollNumber || '').trim();
+        const cStr = (className || '').trim();
+        const sStr = (section || '').trim();
+
+        // Auto-correct template IDs like 1IIIA where Roll is not 1 to [Roll][Class][Section]
+        if (finalAdmission.toLowerCase() === '1' + cStr.toLowerCase() + sStr.toLowerCase() && rStr && rStr !== '1') {
+            finalAdmission = rStr + cStr + sStr;
+        }
+
         return {
             id: generateId(),
             name: name.trim(),
-            admissionNumber: admissionNumber.trim(),
-            rollNumber: (rollNumber || '').trim(),
-            className: (className || '').trim(),
-            section: (section || '').trim(),
+            admissionNumber: finalAdmission,
+            rollNumber: rStr,
+            className: cStr,
+            section: sStr,
             houseId: houseId || null,
             hasVoted: false,
             skipped: false,
@@ -1485,27 +1370,8 @@
 
     async function addVoter(name, admissionNumber, className, section, rollNumber, houseId = null) {
         if (!name || !admissionNumber) return false;
-        try {
-            const res = await fetch('/api/voters', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-                body: JSON.stringify({
-                    name: name.trim(), admission_number: admissionNumber.trim(),
-                    class_name: className, section: section,
-                    roll_number: rollNumber || admissionNumber, house_id: houseId
-                })
-            });
-            if (res.ok) {
-                await loadData();
-                renderAllSettings();
-                showToast(`Added voter ${name.trim()}.`, 'success');
-                return true;
-            }
-        } catch (_) { /* offline – use localStorage */ }
-        // localStorage fallback
         const dup = appData.voters.find(v =>
-            v.admissionNumber === admissionNumber.trim() ||
-            (rollNumber && v.rollNumber === rollNumber.trim())
+            v.admissionNumber === admissionNumber.trim()
         );
         if (dup) { showToast('Voter with this admission number already exists.', 'error'); return false; }
         const voter = buildVoterRecord(name, admissionNumber, className, section, rollNumber, houseId);
@@ -1518,24 +1384,6 @@
 
     async function updateVoter(id, name, admissionNumber, className, section, rollNumber, houseId = null) {
         if (!name || !admissionNumber) return false;
-        try {
-            const res = await fetch('/api/voters/' + encodeURIComponent(id), {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-                body: JSON.stringify({
-                    name: name.trim(), admission_number: admissionNumber.trim(),
-                    class_name: className, section: section,
-                    roll_number: rollNumber || admissionNumber, house_id: houseId
-                })
-            });
-            if (res.ok) {
-                await loadData();
-                renderAllSettings();
-                showToast(`Updated voter ${name.trim()}.`, 'success');
-                return true;
-            }
-        } catch (_) { /* offline – use localStorage */ }
-        // localStorage fallback
         const idx = appData.voters.findIndex(v => v.id === id);
         if (idx === -1) { showToast('Voter not found.', 'error'); return false; }
         appData.voters[idx] = { ...appData.voters[idx], name: name.trim(),
@@ -1621,11 +1469,14 @@
             const section = (parts[headerMap.section] || '').trim();
             const rollNumber = (parts[headerMap.rollnumber] || '').trim();
             const houseId = (parts[headerMap.houseid] || '').trim() || null;
-            if (!name || !admissionNumber) {
-                showToast(`Malformed CSV: Row ${i + 1} is missing voter name or admission number.`, 'error');
-                return;
+            let finalAdmission = admissionNumber.trim();
+            const rStr = (rollNumber || '').trim();
+            const cStr = (className || '').trim();
+            const sStr = (section || '').trim();
+            if (finalAdmission.toLowerCase() === '1' + cStr.toLowerCase() + sStr.toLowerCase() && rStr && rStr !== '1') {
+                finalAdmission = rStr + cStr + sStr;
             }
-            rows.push({ name, admission_number: admissionNumber, class_name: className, section, roll_number: rollNumber || admissionNumber, house_id: houseId });
+            rows.push({ name, admission_number: finalAdmission, class_name: cStr, section: sStr, roll_number: rStr, house_id: houseId });
         }
 
         // Count how many incoming voters would be duplicates
@@ -1641,78 +1492,57 @@
             )
         );
 
-        // Show Merge / Override dialog if running offline
-        if (isOffline()) {
-            // Always add genuinely new voters immediately
-            // Then ask what to do with duplicates only if any exist
-            let added = newVoters.length;
-            let skipped = 0;
-            let overwritten = 0;
+        let added = newVoters.length;
+        let skipped = 0;
+        let overwritten = 0;
 
-            // Add new voters right away
-            for (const r of newVoters) {
-                appData.voters.push(buildVoterRecord(r.name, r.admission_number, r.class_name, r.section, r.roll_number, r.house_id));
+        // Add new voters right away
+        for (const r of newVoters) {
+            appData.voters.push(buildVoterRecord(r.name, r.admission_number, r.class_name, r.section, r.roll_number, r.house_id));
+        }
+
+        if (duplicates.length > 0) {
+            // Build and show inline choice dialog
+            const choice = await showCsvImportChoiceDialog(
+                `${newVoters.length} new voter(s) will be added.\n${duplicates.length} voter(s) already exist (same Admission Number).\n\nWhat should happen to the duplicates?`,
+                duplicates.map(r => r.name)
+            );
+            if (choice === 'cancel') {
+                // Undo the new voter additions
+                for (let i = 0; i < newVoters.length; i++) appData.voters.pop();
+                showToast('Import cancelled.', 'info');
+                return;
             }
-
-            if (duplicates.length > 0) {
-                // Build and show inline choice dialog
-                const choice = await showCsvImportChoiceDialog(
-                    `${newVoters.length} new voter(s) will be added.\n${duplicates.length} voter(s) already exist (same Admission Number).\n\nWhat should happen to the duplicates?`,
-                    duplicates.map(r => r.name)
-                );
-                if (choice === 'cancel') {
-                    // Undo the new voter additions
-                    for (let i = 0; i < newVoters.length; i++) appData.voters.pop();
-                    showToast('Import cancelled.', 'info');
-                    return;
-                }
-                if (choice === 'override') {
-                    for (const r of duplicates) {
-                        const idx = appData.voters.findIndex(v =>
-                            v.admissionNumber && v.admissionNumber.trim() === r.admission_number.trim()
-                        );
-                        if (idx !== -1) {
-                            appData.voters[idx] = {
-                                ...appData.voters[idx],
-                                name: r.name,
-                                className: r.class_name,
-                                section: r.section,
-                                rollNumber: r.roll_number,
-                                houseId: r.house_id || appData.voters[idx].houseId
-                            };
-                            overwritten++;
-                        }
+            if (choice === 'override') {
+                for (const r of duplicates) {
+                    const idx = appData.voters.findIndex(v =>
+                        v.admissionNumber && v.admissionNumber.trim() === r.admission_number.trim()
+                    );
+                    if (idx !== -1) {
+                        appData.voters[idx] = {
+                            ...appData.voters[idx],
+                            name: r.name,
+                            className: r.class_name,
+                            section: r.section,
+                            rollNumber: r.roll_number,
+                            houseId: r.house_id || appData.voters[idx].houseId
+                        };
+                        overwritten++;
                     }
-                } else {
-                    // merge = skip duplicates
-                    skipped = duplicates.length;
                 }
+            } else {
+                // merge = skip duplicates
+                skipped = duplicates.length;
             }
-
-            saveData();
-            renderAllSettings();
-            const parts = [];
-            if (added > 0) parts.push(`${added} added`);
-            if (overwritten > 0) parts.push(`${overwritten} updated`);
-            if (skipped > 0) parts.push(`${skipped} duplicates skipped`);
-            showToast(`Voters imported: ${parts.join(', ')}.`, 'success');
-            return;
         }
 
-        try {
-            const res = await fetch('/api/import', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-                body: JSON.stringify({ type: 'voters', data: rows, overwrite: false })
-            });
-            const data = await res.json();
-            if (!res.ok) { showToast(data.message || 'Import failed.', 'error'); return; }
-            await loadData();
-            renderAllSettings();
-            showToast(`Imported ${data.added || rows.length} voters (${data.skipped || 0} duplicates skipped).`, 'success');
-        } catch (err) {
-            showToast('Network error importing voters.', 'error');
-        }
+        saveData();
+        renderAllSettings();
+        const parts = [];
+        if (added > 0) parts.push(`${added} added`);
+        if (overwritten > 0) parts.push(`${overwritten} updated`);
+        if (skipped > 0) parts.push(`${skipped} duplicates skipped`);
+        showToast(`Voters imported: ${parts.join(', ')}.`, 'success');
     }
 
     // Helper: show a CSV import choice dialog (Merge / Override / Cancel)
@@ -1844,53 +1674,34 @@
             rows.push({ name, category_id: categoryId, house_id: houseId, photo, problems, whyMe });
         }
 
-        // CSV import always APPENDS — duplicates are skipped (no overwrite popup).
-        if (isOffline()) {
-            let added = 0;
-            let skipped = 0;
-            for (const r of rows) {
-                if (!getCategoryById(r.category_id)) {
-                    skipped++;
-                    continue;
-                }
-                const existingIdx = appData.nominees.findIndex(n =>
-                    n.name.toLowerCase() === r.name.toLowerCase() && n.categoryId === r.category_id
-                );
-                if (existingIdx !== -1) {
-                    skipped++;
-                } else {
-                    appData.nominees.push({
-                        id: generateId(),
-                        name: r.name,
-                        categoryId: r.category_id,
-                        houseId: r.house_id || null,
-                        photo: r.photo || '',
-                        manifesto: { problems: r.problems || '', promises: r.problems || '', whyMe: r.whyMe || '' }
-                    });
-                    added++;
-                }
+        let added = 0;
+        let skipped = 0;
+        for (const r of rows) {
+            if (!getCategoryById(r.category_id)) {
+                skipped++;
+                continue;
             }
-            saveData();
-            initializeResults();
-            renderAllSettings();
-            showToast(`Imported ${added} new nominees (${skipped} duplicates skipped).`, 'success');
-            return;
+            const existingIdx = appData.nominees.findIndex(n =>
+                n.name.toLowerCase() === r.name.toLowerCase() && n.categoryId === r.category_id
+            );
+            if (existingIdx !== -1) {
+                skipped++;
+            } else {
+                appData.nominees.push({
+                    id: generateId(),
+                    name: r.name,
+                    categoryId: r.category_id,
+                    houseId: r.house_id || null,
+                    photo: r.photo || '',
+                    manifesto: { problems: r.problems || '', promises: r.problems || '', whyMe: r.whyMe || '' }
+                });
+                added++;
+            }
         }
-
-        try {
-            const res = await fetch('/api/import', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-                body: JSON.stringify({ type: 'nominees', data: rows, overwrite })
-            });
-            const data = await res.json();
-            if (!res.ok) { showToast(data.message || 'Import failed.', 'error'); return; }
-            await loadData();
-            renderAllSettings();
-            showToast(`Imported ${data.added || rows.length} nominees (${data.skipped || 0} duplicates skipped).`, 'success');
-        } catch (err) {
-            showToast('Network error importing nominees.', 'error');
-        }
+        saveData();
+        initializeResults();
+        renderAllSettings();
+        showToast(`Imported ${added} new nominees (${skipped} duplicates skipped).`, 'success');
     }
 
     function getNomineesCsvData() {
@@ -1944,56 +1755,26 @@
             if (!colorHex) { showToast(`Malformed CSV: Row ${i + 1} has an invalid color "${rawColor}".`, 'error'); return; }
             rows.push({ name, color: colorHex });
         }
-        const overwrite = appData.houses.length > 0
-            ? confirm('Duplicate houses might be found. Overwrite duplicates? (OK = Overwrite, Cancel = Skip)')
-            : false;
-
-        if (isOffline()) {
-            let added = 0;
-            let skipped = 0;
-            for (const r of rows) {
-                const existingIdx = appData.houses.findIndex(h =>
-                    h.name.toLowerCase() === r.name.toLowerCase()
-                );
-                if (existingIdx !== -1) {
-                    if (overwrite) {
-                        appData.houses[existingIdx] = {
-                            ...appData.houses[existingIdx],
-                            color: r.color
-                        };
-                        added++;
-                    } else {
-                        skipped++;
-                    }
-                } else {
-                    appData.houses.push({
-                        id: r.name.toLowerCase().replace(/\s+/g, '_') + '_' + Date.now().toString(36),
-                        name: r.name,
-                        color: r.color
-                    });
-                    added++;
-                }
+        let added = 0;
+        let skipped = 0;
+        for (const r of rows) {
+            const existingIdx = appData.houses.findIndex(h =>
+                h.name.toLowerCase() === r.name.toLowerCase()
+            );
+            if (existingIdx !== -1) {
+                skipped++;
+            } else {
+                appData.houses.push({
+                    id: r.name.toLowerCase().replace(/\s+/g, '_') + '_' + Date.now().toString(36),
+                    name: r.name,
+                    color: r.color
+                });
+                added++;
             }
-            saveData();
-            renderAllSettings();
-            showToast(`Imported ${added} houses (${skipped} duplicates skipped).`, 'success');
-            return;
         }
-
-        try {
-            const res = await fetch('/api/import', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-                body: JSON.stringify({ type: 'houses', data: rows, overwrite })
-            });
-            const data = await res.json();
-            if (!res.ok) { showToast(data.message || 'Import failed.', 'error'); return; }
-            await loadData();
-            renderAllSettings();
-            showToast(`Imported ${data.added || rows.length} houses (${data.skipped || 0} duplicates skipped).`, 'success');
-        } catch (err) {
-            showToast('Network error importing houses.', 'error');
-        }
+        saveData();
+        renderAllSettings();
+        showToast(`Imported ${added} houses (${skipped} duplicates skipped).`, 'success');
     }
 
     function getHousesCsvData() {
@@ -2044,92 +1825,44 @@
             if (!name) { showToast(`Malformed CSV: Row ${i + 1} is missing the name value.`, 'error'); return; }
             rows.push({ name, houseSpecific, houseId });
         }
-        const overwrite = appData.categories.length > 0
-            ? confirm('Duplicate categories might be found. Overwrite duplicates? (OK = Overwrite, Cancel = Skip)')
-            : false;
-
-        if (isOffline()) {
-            let added = 0;
-            let skipped = 0;
-            for (const r of rows) {
-                const existingIdx = appData.categories.findIndex(c =>
-                    c.name.toLowerCase() === r.name.toLowerCase()
-                );
-                if (existingIdx !== -1) {
-                    if (overwrite) {
-                        appData.categories[existingIdx] = {
-                            ...appData.categories[existingIdx],
-                            houseSpecific: r.houseSpecific,
-                            houseId: r.houseId
-                        };
-                        added++;
-                    } else {
-                        skipped++;
-                    }
-                } else {
-                    appData.categories.push({
-                        id: r.name.toLowerCase().replace(/\s+/g, '_') + '_' + Date.now().toString(36),
-                        name: r.name,
-                        houseSpecific: r.houseSpecific,
-                        houseId: r.houseId
-                    });
-                    added++;
-                }
+        let added = 0;
+        let skipped = 0;
+        for (const r of rows) {
+            const existingIdx = appData.categories.findIndex(c =>
+                c.name.toLowerCase() === r.name.toLowerCase()
+            );
+            if (existingIdx !== -1) {
+                skipped++;
+            } else {
+                appData.categories.push({
+                    id: r.name.toLowerCase().replace(/\s+/g, '_') + '_' + Date.now().toString(36),
+                    name: r.name,
+                    houseSpecific: r.houseSpecific,
+                    houseId: r.houseId
+                });
+                added++;
             }
-            saveData();
-            initializeResults();
-            renderAllSettings();
-            showToast(`Imported ${added} categories (${skipped} duplicates skipped).`, 'success');
-            return;
         }
-
-        try {
-            const res = await fetch('/api/import', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-                body: JSON.stringify({ type: 'categories', data: rows, overwrite })
-            });
-            const data = await res.json();
-            if (!res.ok) { showToast(data.message || 'Import failed.', 'error'); return; }
-            await loadData();
-            renderAllSettings();
-            showToast(`Imported ${data.added || rows.length} categories (${data.skipped || 0} duplicates skipped).`, 'success');
-        } catch (err) {
-            showToast('Network error importing categories.', 'error');
-        }
+        saveData();
+        initializeResults();
+        renderAllSettings();
+        showToast(`Imported ${added} categories (${skipped} duplicates skipped).`, 'success');
     }
 
     async function clearAllVoters() {
         if (!confirm('Remove all voters? This will also clear all votes.')) return;
-        if (isOffline()) {
-            appData.voters = [];
-            activeHomeVoterId = null;
-            activeHomeHouseId = null;
-            appData.settings.lastHomeHouseId = null;
-            appData.results = {};
-            for (const cat of appData.categories) {
-                appData.results[cat.id] = {};
-            }
-            appData.settings.resultsPublished = false;
-            saveData();
-            renderAllSettings();
-            showToast('All voters and votes cleared.', 'info');
-            return;
+        appData.voters = [];
+        activeHomeVoterId = null;
+        activeHomeHouseId = null;
+        appData.settings.lastHomeHouseId = null;
+        appData.results = {};
+        for (const cat of appData.categories) {
+            appData.results[cat.id] = {};
         }
-        try {
-            const res = await fetch('/api/voters', {
-                method: 'DELETE',
-                headers: getAuthHeader()
-            });
-            if (!res.ok) throw new Error();
-            await loadData();
-            activeHomeVoterId = null;
-            activeHomeHouseId = null;
-            renderAllSettings();
-            showToast('All voters and votes cleared.', 'info');
-        } catch (err) {
-            showToast('Network error clearing voters.', 'error');
-        }
+        appData.settings.resultsPublished = false;
+        saveData();
+        renderAllSettings();
+        showToast('All voters and votes cleared.', 'info');
     }
 
     async function castVotes(rollNumber, selections, pin) {
@@ -2198,48 +1931,21 @@
             encrypted = btoa(JSON.stringify(voteData));
         }
 
-        if (isOffline()) {
-            voter.hasVoted = true;
-            voter.skipped = false;
-            voter.pinHash = pinHash;
-            voter.voteEncrypted = encrypted;
-            voter.voteTimestamp = voteData.timestamp;
+        voter.hasVoted = true;
+        voter.skipped = false;
+        voter.pinHash = pinHash;
+        voter.voteEncrypted = encrypted;
+        voter.voteTimestamp = voteData.timestamp;
 
-            for (const catId in selections) {
-                const nomineeId = selections[catId];
-                if (!appData.results[catId]) appData.results[catId] = {};
-                appData.results[catId][nomineeId] = (appData.results[catId][nomineeId] || 0) + 1;
-            }
-            saveData();
-            renderAll();
-            showToast('✅ Your votes have been cast!', 'success');
-            return true;
+        for (const catId in selections) {
+            const nomineeId = selections[catId];
+            if (!appData.results[catId]) appData.results[catId] = {};
+            appData.results[catId][nomineeId] = (appData.results[catId][nomineeId] || 0) + 1;
         }
-        try {
-            const res = await fetch('/api/vote', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    rollNumber: voter.rollNumber || voter.admissionNumber,
-                    selections,
-                    pinHash,
-                    voteEncrypted: encrypted,
-                    voteTimestamp: voteData.timestamp
-                })
-            });
-            const data = await res.json();
-            if (!res.ok) {
-                showToast(data.message || 'Failed to cast vote.', 'error');
-                return false;
-            }
-            await loadData();
-            renderAll();
-            showToast('✅ Your votes have been cast!', 'success');
-            return true;
-        } catch (err) {
-            showToast('Network error casting vote.', 'error');
-            return false;
-        }
+        saveData();
+        renderAll();
+        showToast('✅ Your votes have been cast!', 'success');
+        return true;
     }
 
     async function skipVote(rollNumber) {
@@ -2256,33 +1962,12 @@
             showToast('You have already skipped.', 'error');
             return false;
         }
-        if (isOffline()) {
-            voter.skipped = true;
-            voter.hasVoted = true;
-            saveData();
-            renderAll();
-            showToast('You have skipped voting.', 'info');
-            return true;
-        }
-        try {
-            const res = await fetch('/api/vote/skip', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ rollNumber: voter.rollNumber || voter.admissionNumber })
-            });
-            const data = await res.json();
-            if (!res.ok) {
-                showToast(data.message || 'Failed to skip voting.', 'error');
-                return false;
-            }
-            await loadData();
-            renderAll();
-            showToast('You have skipped voting.', 'info');
-            return true;
-        } catch (err) {
-            showToast('Network error skipping voting.', 'error');
-            return false;
-        }
+        voter.skipped = true;
+        voter.hasVoted = true;
+        saveData();
+        renderAll();
+        showToast('You have skipped voting.', 'info');
+        return true;
     }
 
     async function verifyVote(rollNumber, pin) {
@@ -2300,123 +1985,50 @@
             return null;
         }
         const pinHash = hashString(pin);
-        if (isOffline()) {
-            if (pinHash !== voter.pinHash) {
-                showToast('Incorrect PIN.', 'error');
-                return null;
-            }
-            try {
-                let voteData = null;
-                if (voter.voteEncrypted) {
-                    if (voter.pinHash) {
-                        voteData = await decryptVote(voter.voteEncrypted, pin);
-                    } else {
-                        voteData = JSON.parse(atob(voter.voteEncrypted));
-                    }
-                }
-                return voteData;
-            } catch (_) {
-                return null;
-            }
+        if (pinHash !== voter.pinHash) {
+            showToast('Incorrect PIN.', 'error');
+            return null;
         }
         try {
-            const res = await fetch('/api/vote/verify', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    rollNumber: voter.rollNumber || voter.admissionNumber,
-                    pinHash
-                })
-            });
-            const data = await res.json();
-            if (!res.ok) {
-                showToast(data.message || 'Failed to verify vote.', 'error');
-                return null;
-            }
-
             let voteData = null;
-            if (data.voteEncrypted) {
-                if (data.pinHash) {
-                    voteData = await decryptVote(data.voteEncrypted, pin);
+            if (voter.voteEncrypted) {
+                if (voter.pinHash) {
+                    voteData = await decryptVote(voter.voteEncrypted, pin);
                 } else {
-                    voteData = JSON.parse(atob(data.voteEncrypted));
+                    voteData = JSON.parse(atob(voter.voteEncrypted));
                 }
             }
-            if (!voteData) {
-                showToast('Failed to decrypt vote. Incorrect PIN or corrupted data.', 'error');
-                return null;
-            }
             return voteData;
-        } catch (err) {
-            showToast('Network error verifying vote.', 'error');
+        } catch (_) {
             return null;
         }
     }
 
     async function resetElection() {
         if (!confirm('⚠️ Reset all votes and results? This cannot be undone!')) return;
-        if (isOffline()) {
-            for (const v of appData.voters) {
-                v.hasVoted = false;
-                v.skipped = false;
-                v.pinHash = null;
-                v.voteEncrypted = null;
-                v.voteTimestamp = null;
-            }
-            appData.results = {};
-            for (const cat of appData.categories) {
-                appData.results[cat.id] = {};
-            }
-            appData.settings.resultsPublished = false;
-            saveData();
-            renderAll();
-            showToast('Election has been reset.', 'info');
-            return;
+        for (const v of appData.voters) {
+            v.hasVoted = false;
+            v.skipped = false;
+            v.pinHash = null;
+            v.voteEncrypted = null;
+            v.voteTimestamp = null;
         }
-        try {
-            const res = await fetch('/api/results/reset', {
-                method: 'POST',
-                headers: getAuthHeader()
-            });
-            if (!res.ok) {
-                const err = await res.json();
-                showToast(err.message || 'Failed to reset election.', 'error');
-                return;
-            }
-            await loadData();
-            renderAll();
-            showToast('Election has been reset.', 'info');
-        } catch (err) {
-            showToast('Network error resetting election.', 'error');
+        appData.results = {};
+        for (const cat of appData.categories) {
+            appData.results[cat.id] = {};
         }
+        appData.settings.resultsPublished = false;
+        saveData();
+        renderAll();
+        showToast('Election has been reset.', 'info');
     }
 
     async function publishResults() {
         const isPublished = appData.settings.resultsPublished;
-        if (isOffline()) {
-            appData.settings.resultsPublished = !isPublished;
-            saveData();
-            renderAll();
-            showToast(isPublished ? 'Results unpublished.' : '📊 Results published!', 'gold');
-            return;
-        }
-        const endpoint = isPublished ? '/api/results/unpublish' : '/api/results/publish';
-        try {
-            const res = await fetch(endpoint, {
-                method: 'POST',
-                headers: getAuthHeader()
-            });
-            if (!res.ok) {
-                const err = await res.json();
-                showToast(err.message || 'Failed to update results publication status.', 'error');
-                return;
-            }
-            await loadData();
-            renderAll();
-            showToast(isPublished ? 'Results unpublished.' : '📊 Results published!', 'gold');
-        } catch (err) {
-            showToast('Network error publishing results.', 'error');
-        }
+        appData.settings.resultsPublished = !isPublished;
+        saveData();
+        renderAll();
+        showToast(isPublished ? 'Results unpublished.' : '📊 Results published!', 'gold');
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2538,52 +2150,17 @@
 
     async function unlockSettings(password) {
         document.getElementById('pwError').classList.add('hidden');
-
-        // ── 1) Try backend API (MySQL mode) ─────────────────────────────────
         try {
-            const res = await fetch('/api/admin/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ password })
-            });
-            const data = await res.json();
-            if (res.ok && data.token) {
-                sessionStorage.setItem('adminToken', data.token);
+            const enteredHash = await sha256(password);
+            const storedHash = appData.settings && appData.settings.adminPasswordHash;
+
+            if (storedHash && enteredHash === storedHash) {
                 settingsUnlocked = true;
                 document.getElementById('passwordOverlay').classList.remove('active');
                 document.getElementById('settingsPage').classList.add('active');
                 document.getElementById('homepage').style.display = 'none';
                 renderAllSettings();
                 showToast('Settings unlocked.', 'success');
-                return;
-            }
-            // API responded but password was wrong
-            if (res.status === 401 || res.status === 403) {
-                // Before showing error, also try local hash (in case API hash differs from local)
-                // fall through to local check below
-            } else {
-                // Other API error (e.g. DB down) — fall through to local check
-            }
-        } catch (_) {
-            // Network error / server not reachable — fall through to local check
-        }
-
-        // ── 2) Fallback: local hash check (localStorage / offline mode) ─────
-        // The original app stored adminPasswordHash in appData.settings.
-        // Compare SHA-256(entered password) against that stored hash.
-        try {
-            const enteredHash = await sha256(password);
-            const storedHash = appData.settings && appData.settings.adminPasswordHash;
-
-            if (storedHash && enteredHash === storedHash) {
-                // Issue a synthetic local token so getAuthHeader() keeps working
-                sessionStorage.setItem('adminToken', 'local_offline_token');
-                settingsUnlocked = true;
-                document.getElementById('passwordOverlay').classList.remove('active');
-                document.getElementById('settingsPage').classList.add('active');
-                document.getElementById('homepage').style.display = 'none';
-                renderAllSettings();
-                showToast('Settings unlocked (offline mode).', 'success');
                 return;
             }
 
@@ -2624,36 +2201,15 @@
             showToast('Passwords do not match.', 'error');
             return;
         }
-        if (isOffline()) {
-            try {
-                const hashed = await sha256(newPass);
-                appData.settings.adminPasswordHash = hashed;
-                saveData();
-                showToast('Admin password updated locally.', 'success');
-                document.getElementById('newAdminPass').value = '';
-                document.getElementById('confirmAdminPass').value = '';
-                return;
-            } catch (_) {
-                showToast('Failed to update password.', 'error');
-                return;
-            }
-        }
         try {
-            const res = await fetch('/api/admin/password', {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-                body: JSON.stringify({ newPassword: newPass })
-            });
-            const data = await res.json();
-            if (!res.ok) {
-                showToast(data.message || 'Failed to update password.', 'error');
-                return;
-            }
+            const hashed = await sha256(newPass);
+            appData.settings.adminPasswordHash = hashed;
+            saveData();
             showToast('Admin password updated.', 'success');
             document.getElementById('newAdminPass').value = '';
             document.getElementById('confirmAdminPass').value = '';
-        } catch (err) {
-            showToast('Network error updating password.', 'error');
+        } catch (_) {
+            showToast('Failed to update password.', 'error');
         }
     }
 
@@ -2857,54 +2413,22 @@
             e.preventDefault();
             const name = document.getElementById('schoolNameInput').value.trim();
             const subtitle = document.getElementById('schoolSubtitleInput').value.trim();
-            if (isOffline()) {
-                appData.schoolName = name || appData.schoolName;
-                appData.schoolSubtitle = subtitle || appData.schoolSubtitle;
-                saveData();
-                renderAllSettings();
-                showToast('Branding updated.', 'success');
-                return;
-            }
-            try {
-                const res = await fetch('/api/settings', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-                    body: JSON.stringify({ schoolName: name || appData.schoolName, schoolSubtitle: subtitle || appData.schoolSubtitle })
-                });
-                if (!res.ok) throw new Error();
-                await loadData();
-                renderAllSettings();
-                showToast('Branding updated.', 'success');
-            } catch (err) {
-                showToast('Network error saving branding.', 'error');
-            }
+            appData.schoolName = name || appData.schoolName;
+            appData.schoolSubtitle = subtitle || appData.schoolSubtitle;
+            saveData();
+            renderAllSettings();
+            showToast('Branding updated.', 'success');
         });
 
         document.getElementById('visibilityForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             const showSkip = document.getElementById('showSkipCheckbox').checked;
             const showVerify = document.getElementById('showVerifyCheckbox').checked;
-            if (isOffline()) {
-                appData.settings.showSkipButton = showSkip;
-                appData.settings.showVerifyButton = showVerify;
-                saveData();
-                renderAllSettings();
-                showToast('Visibility settings saved.', 'success');
-                return;
-            }
-            try {
-                const res = await fetch('/api/settings', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-                    body: JSON.stringify({ showSkipButton: showSkip, showVerifyButton: showVerify })
-                });
-                if (!res.ok) throw new Error();
-                await loadData();
-                renderAllSettings();
-                showToast('Visibility settings saved.', 'success');
-            } catch (err) {
-                showToast('Network error saving visibility settings.', 'error');
-            }
+            appData.settings.showSkipButton = showSkip;
+            appData.settings.showVerifyButton = showVerify;
+            saveData();
+            renderAllSettings();
+            showToast('Visibility settings saved.', 'success');
         });
 
         // ─── Settings: Election Mode ───
@@ -2912,27 +2436,11 @@
             e.preventDefault();
             const electionMode = document.getElementById('electionMode').value;
             const isActive = document.getElementById('electionStatus').value === 'active';
-            if (isOffline()) {
-                appData.settings.electionMode = electionMode;
-                appData.settings.isActive = isActive;
-                saveData();
-                renderAllSettings();
-                showToast('Election settings saved.', 'success');
-                return;
-            }
-            try {
-                const res = await fetch('/api/settings', {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
-                    body: JSON.stringify({ electionMode, isActive })
-                });
-                if (!res.ok) throw new Error();
-                await loadData();
-                renderAllSettings();
-                showToast('Election settings saved.', 'success');
-            } catch (err) {
-                showToast('Network error saving election settings.', 'error');
-            }
+            appData.settings.electionMode = electionMode;
+            appData.settings.isActive = isActive;
+            saveData();
+            renderAllSettings();
+            showToast('Election settings saved.', 'success');
         });
 
         // ─── Settings: Change Password ───
@@ -3299,59 +2807,25 @@ James Rodriguez,deputy_head_boy,,,Organize better events,I have great leadership
         }
 
         // ─── Settings: Export / Clear ───
-        document.getElementById('exportDataBtn').addEventListener('click', async function() {
-            if (isOffline()) {
-                const json = JSON.stringify(appData, null, 2);
-                const blob = new Blob([json], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `election_data_${new Date().toISOString().slice(0,10)}.json`;
-                a.click();
-                URL.revokeObjectURL(url);
-                showToast('Data exported.', 'success');
-                return;
-            }
-            try {
-                const res = await fetch('/api/export/json', { headers: getAuthHeader() });
-                if (!res.ok) throw new Error();
-                const json = await res.text();
-                const blob = new Blob([json], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `election_data_${new Date().toISOString().slice(0,10)}.json`;
-                a.click();
-                URL.revokeObjectURL(url);
-                showToast('Data exported.', 'success');
-            } catch (err) {
-                showToast('Network error exporting data.', 'error');
-            }
+        document.getElementById('exportDataBtn').addEventListener('click', function() {
+            const json = JSON.stringify(appData, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `election_data_${new Date().toISOString().slice(0,10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast('Data exported.', 'success');
         });
 
         document.getElementById('clearAllDataBtn').addEventListener('click', async function() {
             if (!confirm('⚠️ Delete ALL election data? This cannot be undone!')) return;
-            if (isOffline()) {
-                localStorage.removeItem(STORAGE_KEY);
-                await loadData();
-                initializeResults();
-                renderAll();
-                showToast('All data cleared.', 'info');
-                return;
-            }
-            try {
-                const res = await fetch('/api/results/clear-all', {
-                    method: 'POST',
-                    headers: getAuthHeader()
-                });
-                if (!res.ok) throw new Error();
-                await loadData();
-                initializeResults();
-                renderAll();
-                showToast('All data cleared.', 'info');
-            } catch (err) {
-                showToast('Network error clearing data.', 'error');
-            }
+            localStorage.removeItem(STORAGE_KEY);
+            await loadData();
+            initializeResults();
+            renderAll();
+            showToast('All data cleared.', 'info');
         });
 
         // ─── Settings: Import All Data (JSON) ───
@@ -3518,6 +2992,15 @@ James Rodriguez,deputy_head_boy,,,Organize better events,I have great leadership
 
                     // 4. Voters — deduplicate by rollNumber (primary key), then admissionNumber
                     for (const v of (imported.voters || [])) {
+                        // Apply template ID auto-correction
+                        const rStr = (v.rollNumber || '').trim();
+                        const cStr = (v.className || '').trim();
+                        const sStr = (v.section || '').trim();
+                        const adm = (v.admissionNumber || '').trim();
+                        if (adm.toLowerCase() === '1' + cStr.toLowerCase() + sStr.toLowerCase() && rStr && rStr !== '1') {
+                            v.admissionNumber = rStr + cStr + sStr;
+                        }
+
                         const existing = findDuplicateVoter(v);
                         if (existing) {
                             if (voterConflict === 'overwrite') {
