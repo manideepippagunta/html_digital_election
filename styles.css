@@ -1120,3 +1120,38 @@ body {
 .votes-text {
     color: var(--text-light);
 }
+
+/* ─── RUNNER-UP STYLES ─── */
+.result-nominee-card.runnerup-card {
+    border-color: var(--primary-light);
+    background: linear-gradient(90deg, #f4f8ff 0%, #ffffff 100%);
+    box-shadow: 0 4px 15px rgba(42, 90, 155, 0.1);
+}
+
+.result-nominee-rank.rank-runnerup {
+    background: var(--primary-light);
+    color: #fff;
+}
+
+.runnerup-trophy {
+    font-size: 1.1rem;
+}
+
+.runnerup-badge {
+    background: #e8f0fe;
+    color: var(--primary);
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.result-bar-fill.fill-runnerup {
+    background: var(--primary-light);
+}
+

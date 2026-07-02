@@ -869,8 +869,10 @@
                     return votesB - votesA;
                 });
 
-                // Find max votes to identify the winner(s)
-                const maxVotes = Math.max(0, ...sortedNominees.map(n => catResults[n.id] || 0));
+                // Find max and second max votes to identify winner and runner-up
+                const uniqueVotes = [...new Set(sortedNominees.map(n => catResults[n.id] || 0))].sort((a, b) => b - a);
+                const maxVotes = uniqueVotes[0] || 0;
+                const secondMaxVotes = uniqueVotes[1] || 0;
 
                 html += `
                     <div class="result-category-card">
@@ -885,26 +887,47 @@
                     const v = catResults[n.id] || 0;
                     const pct = totalGroupVotes > 0 ? Math.round((v / totalGroupVotes) * 100) : 0;
                     const isWinner = v === maxVotes && maxVotes > 0;
+                    const isRunnerUp = v === secondMaxVotes && secondMaxVotes > 0 && secondMaxVotes < maxVotes;
                     const rank = index + 1;
 
                     const photoHtml = n.photo ?
                         `<img src="${n.photo}" alt="${n.name}" onerror="this.style.display='none';this.parentElement.textContent='👤';" />` :
                         '👤';
 
+                    let cardClass = '';
+                    let rankClass = '';
+                    let rankContent = `#${rank}`;
+                    let badgeHtml = '';
+                    let fillClass = '';
+
+                    if (isWinner) {
+                        cardClass = 'winner-card';
+                        rankClass = 'rank-winner';
+                        rankContent = '<i class="fas fa-trophy winner-trophy"></i>';
+                        badgeHtml = '<span class="winner-badge"><i class="fas fa-crown"></i> Winner</span>';
+                        fillClass = 'fill-winner';
+                    } else if (isRunnerUp) {
+                        cardClass = 'runnerup-card';
+                        rankClass = 'rank-runnerup';
+                        rankContent = '<i class="fas fa-award runnerup-trophy"></i>';
+                        badgeHtml = '<span class="runnerup-badge"><i class="fas fa-award"></i> Runner-up</span>';
+                        fillClass = 'fill-runnerup';
+                    }
+
                     html += `
-                        <div class="result-nominee-card ${isWinner ? 'winner-card' : ''}">
-                            <div class="result-nominee-rank ${isWinner ? 'rank-winner' : ''}">
-                                ${isWinner ? '<i class="fas fa-trophy winner-trophy"></i>' : `#${rank}`}
+                        <div class="result-nominee-card ${cardClass}">
+                            <div class="result-nominee-rank ${rankClass}">
+                                ${rankContent}
                             </div>
                             <div class="result-nominee-avatar">${photoHtml}</div>
                             <div class="result-nominee-details">
                                 <div class="result-nominee-name">
                                     <span>${n.name}</span>
-                                    ${isWinner ? '<span class="winner-badge"><i class="fas fa-crown"></i> Winner</span>' : ''}
+                                    ${badgeHtml}
                                 </div>
                                 <div class="result-bar-container">
                                     <div class="result-bar-track">
-                                        <div class="result-bar-fill ${isWinner ? 'fill-winner' : ''}" style="width: ${pct}%;"></div>
+                                        <div class="result-bar-fill ${fillClass}" style="width: ${pct}%;"></div>
                                     </div>
                                     <div class="result-bar-stats">
                                         <span class="pct-text">${pct}%</span>
@@ -2807,7 +2830,7 @@ James Rodriguez,deputy_head_boy,,,Organize better events,I have great leadership
         }
 
         // ─── Settings: Export / Clear ───
-        document.getElementById('exportDataBtn').addEventListener('click', function() {
+        function triggerJsonExport() {
             const json = JSON.stringify(appData, null, 2);
             const blob = new Blob([json], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
@@ -2817,7 +2840,14 @@ James Rodriguez,deputy_head_boy,,,Organize better events,I have great leadership
             a.click();
             URL.revokeObjectURL(url);
             showToast('Data exported.', 'success');
-        });
+        }
+
+        document.getElementById('exportDataBtn').addEventListener('click', triggerJsonExport);
+
+        const exportResultsJsonBtn = document.getElementById('exportResultsJsonBtn');
+        if (exportResultsJsonBtn) {
+            exportResultsJsonBtn.addEventListener('click', triggerJsonExport);
+        }
 
         document.getElementById('clearAllDataBtn').addEventListener('click', async function() {
             if (!confirm('⚠️ Delete ALL election data? This cannot be undone!')) return;
@@ -2828,22 +2858,22 @@ James Rodriguez,deputy_head_boy,,,Organize better events,I have great leadership
             showToast('All data cleared.', 'info');
         });
 
-        // ─── Settings: Import All Data (JSON) ───
+        // ─── persistent hidden file input for JSON import ───
         let _pendingImportJson = null; // stores parsed JSON while modal is open
+        const _jsonFileInput = document.getElementById('jsonImportFileInput');
 
-        document.getElementById('importDataBtn').addEventListener('click', function() {
+        function triggerJsonImport() {
             _pendingImportJson = null;
-            document.getElementById('jsonImportFileInput').value = '';
-            document.getElementById('jsonImportFileInput').click();
-        });
+            _jsonFileInput.value = '';
+            _jsonFileInput.click();
+        }
 
-        document.getElementById('jsonImportFileInput').addEventListener('change', async function() {
+        _jsonFileInput.addEventListener('change', async function() {
             if (!this.files || this.files.length === 0) return;
             const file = this.files[0];
             try {
                 const text = await file.text();
                 const parsed = JSON.parse(text);
-                // Basic schema check
                 if (!parsed || typeof parsed !== 'object') throw new Error('Invalid JSON structure.');
                 _pendingImportJson = parsed;
                 openJsonMergeModal();
@@ -2853,6 +2883,13 @@ James Rodriguez,deputy_head_boy,,,Organize better events,I have great leadership
             this.value = '';
         });
 
+        document.getElementById('importDataBtn').addEventListener('click', triggerJsonImport);
+
+        const importResultsJsonBtn = document.getElementById('importResultsJsonBtn');
+        if (importResultsJsonBtn) {
+            importResultsJsonBtn.addEventListener('click', triggerJsonImport);
+        }
+
         function openJsonMergeModal() {
             const modal = document.getElementById('jsonMergeModal');
             document.getElementById('jsonMergeOptions').classList.remove('hidden');
@@ -2860,46 +2897,43 @@ James Rodriguez,deputy_head_boy,,,Organize better events,I have great leadership
             document.getElementById('jsonMergeSummary').innerHTML = '';
             document.getElementById('jsonMergeError').classList.add('hidden');
             document.getElementById('jsonMergeError').textContent = '';
-            document.getElementById('jsonMergeActions').innerHTML = `
-                <button type="button" class="btn btn-primary" id="jsonMergeConfirmBtn"><i class="fas fa-check"></i> Proceed</button>
-                <button type="button" class="btn btn-outline" id="jsonMergeCancelBtn">Cancel</button>
-            `;
-            // Show/hide voter conflict dropdown based on mode
-            const conflictWrap = document.getElementById('voterConflictWrap');
-            document.querySelectorAll('input[name="importMode"]').forEach(radio => {
-                radio.addEventListener('change', function() {
-                    conflictWrap.style.display = this.value === 'append' ? '' : 'none';
-                });
-            });
-            // Set initial visibility
-            const selected = document.querySelector('input[name="importMode"]:checked');
-            conflictWrap.style.display = (selected && selected.value === 'append') ? '' : 'none';
-
-            document.getElementById('jsonMergeConfirmBtn').addEventListener('click', executeJsonImport);
-            document.getElementById('jsonMergeCancelBtn').addEventListener('click', closeJsonMergeModal);
+            document.getElementById('jsonMergeDoneRow').classList.add('hidden');
 
             modal.classList.remove('hidden');
+            modal.classList.add('active');
         }
 
         function closeJsonMergeModal() {
-            document.getElementById('jsonMergeModal').classList.add('hidden');
+            const modal = document.getElementById('jsonMergeModal');
+            modal.classList.remove('active');
+            modal.classList.add('hidden');
             _pendingImportJson = null;
         }
 
+        // Bind event listeners to the direct choice buttons
+        document.getElementById('jsonMergeAppendBtn').addEventListener('click', () => executeJsonImport('append'));
+        document.getElementById('jsonMergeReplaceBtn').addEventListener('click', () => executeJsonImport('replace'));
+        document.getElementById('jsonMergeCancelBtn').addEventListener('click', closeJsonMergeModal);
+        document.getElementById('jsonMergeDoneBtn').addEventListener('click', () => {
+            closeJsonMergeModal();
+            renderAll();              // recalculates stats, results, winners, rankings, vote %
+            updateButtonVisibility();
+        });
+
         // ─── Core offline merge engine (no backend, no JWT) ───
-        async function executeJsonImport() {
+        async function executeJsonImport(mode) {
+            console.log('[Import] executeJsonImport called with mode:', mode);
+            console.log('[Import] _pendingImportJson:', _pendingImportJson ? 'has data' : 'NULL - aborting');
             if (!_pendingImportJson) { closeJsonMergeModal(); return; }
-            const mode = document.querySelector('input[name="importMode"]:checked')?.value || 'append';
-            const voterConflict = document.getElementById('voterConflictMode').value || 'skip';
 
             if (mode === 'replace') {
                 if (!confirm('⚠️ Override mode will PERMANENTLY REPLACE all current election data (voters, votes, nominees, results) with the imported file.\n\nThis cannot be undone. Continue?')) return;
             }
 
-            const confirmBtn = document.getElementById('jsonMergeConfirmBtn');
-            confirmBtn.disabled = true;
-            confirmBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing…';
-            document.getElementById('jsonMergeError').classList.add('hidden');
+            document.getElementById('jsonMergeOptions').classList.add('hidden');
+            const errEl = document.getElementById('jsonMergeError');
+            errEl.classList.add('hidden');
+            errEl.textContent = '';
 
             try {
                 const imported = _pendingImportJson;
@@ -2912,16 +2946,6 @@ James Rodriguez,deputy_head_boy,,,Organize better events,I have great leadership
                     voters_added: 0, voters_skipped: 0, voters_overwritten: 0,
                     votes_added: 0
                 };
-
-                // Helper: find existing voter by admissionNumber ONLY (rollNumbers are not unique across classes)
-                function findDuplicateVoter(v) {
-                    if (v.admissionNumber && v.admissionNumber.trim()) {
-                        return appData.voters.find(e =>
-                            e.admissionNumber && e.admissionNumber.trim() === v.admissionNumber.trim()
-                        ) || null;
-                    }
-                    return null;
-                }
 
                 if (mode === 'replace') {
                     // ── Override: completely replace appData with imported file ──
@@ -2945,67 +2969,141 @@ James Rodriguez,deputy_head_boy,,,Organize better events,I have great leadership
                     s.categories_added  = appData.categories.length;
                     s.nominees_added    = appData.nominees.length;
                     s.voters_added      = appData.voters.length;
-                    for (const catId in appData.results)
-                        for (const nomId in appData.results[catId])
+                    for (const catId in appData.results) {
+                        for (const nomId in appData.results[catId]) {
                             s.votes_added += (appData.results[catId][nomId] || 0);
+                        }
+                    }
 
                 } else {
                     // ── Append: smart offline merge ──
+                    console.log('[Import] Starting APPEND merge...');
+                    console.log('[Import] Local results before merge:', JSON.stringify(appData.results));
+                    console.log('[Import] Imported results to merge:', JSON.stringify(imported.results));
+
+                    const categoryMap = {};
+                    const houseMap = {};
+                    const nomineeMap = {};
 
                     // 1. Houses — deduplicate by id then by name (case-insensitive)
                     for (const h of (imported.houses || [])) {
+                        const hName = String(h.name || '').trim().toLowerCase();
                         const dupById   = appData.houses.find(e => e.id === h.id);
                         const dupByName = appData.houses.find(e =>
-                            e.name.trim().toLowerCase() === (h.name || '').trim().toLowerCase()
+                            String(e.name || '').trim().toLowerCase() === hName
                         );
-                        if (!dupById && !dupByName) {
-                            appData.houses.push({ ...h });
-                            s.houses_added++;
-                        } else {
+                        if (dupById) {
+                            houseMap[h.id] = dupById.id;
                             s.houses_skipped++;
+                        } else if (dupByName) {
+                            houseMap[h.id] = dupByName.id;
+                            s.houses_skipped++;
+                        } else {
+                            appData.houses.push({ ...h });
+                            houseMap[h.id] = h.id;
+                            s.houses_added++;
                         }
                     }
 
                     // 2. Categories — deduplicate by id then by name
                     for (const c of (imported.categories || [])) {
+                        const cName = String(c.name || '').trim().toLowerCase();
                         const dupById   = appData.categories.find(e => e.id === c.id);
                         const dupByName = appData.categories.find(e =>
-                            e.name.trim().toLowerCase() === (c.name || '').trim().toLowerCase()
+                            String(e.name || '').trim().toLowerCase() === cName
                         );
-                        if (!dupById && !dupByName) {
-                            appData.categories.push({ ...c });
-                            s.categories_added++;
-                        } else {
+                        if (dupById) {
+                            categoryMap[c.id] = dupById.id;
                             s.categories_skipped++;
+                        } else if (dupByName) {
+                            categoryMap[c.id] = dupByName.id;
+                            s.categories_skipped++;
+                        } else {
+                            const cCopy = { ...c };
+                            if (cCopy.houseId) {
+                                cCopy.houseId = houseMap[cCopy.houseId] || cCopy.houseId;
+                            }
+                            appData.categories.push(cCopy);
+                            categoryMap[c.id] = c.id;
+                            s.categories_added++;
                         }
                     }
 
-                    // 3. Nominees — deduplicate by id
+                    // 3. Nominees — deduplicate by id then by name + mapped category + mapped house
                     for (const n of (imported.nominees || [])) {
-                        if (!appData.nominees.find(e => e.id === n.id)) {
-                            appData.nominees.push({ ...n });
-                            s.nominees_added++;
-                        } else {
+                        const mappedCatId = categoryMap[n.categoryId] || n.categoryId;
+                        const mappedHouseId = n.houseId ? (houseMap[n.houseId] || n.houseId) : null;
+                        const nName = String(n.name || '').trim().toLowerCase();
+
+                        const dupById   = appData.nominees.find(e => e.id === n.id);
+                        const dupByName = appData.nominees.find(e =>
+                            String(e.name || '').trim().toLowerCase() === nName &&
+                            e.categoryId === mappedCatId &&
+                            e.houseId === mappedHouseId
+                        );
+
+                        if (dupById) {
+                            nomineeMap[n.id] = dupById.id;
                             s.nominees_skipped++;
+                        } else if (dupByName) {
+                            nomineeMap[n.id] = dupByName.id;
+                            s.nominees_skipped++;
+                        } else {
+                            const nCopy = { ...n };
+                            nCopy.categoryId = mappedCatId;
+                            nCopy.houseId = mappedHouseId;
+                            appData.nominees.push(nCopy);
+                            nomineeMap[n.id] = n.id;
+                            s.nominees_added++;
                         }
                     }
 
                     // 4. Voters — deduplicate by rollNumber (primary key), then admissionNumber
                     for (const v of (imported.voters || [])) {
                         // Apply template ID auto-correction
-                        const rStr = (v.rollNumber || '').trim();
-                        const cStr = (v.className || '').trim();
-                        const sStr = (v.section || '').trim();
-                        const adm = (v.admissionNumber || '').trim();
+                        const rStr = String(v.rollNumber || '').trim();
+                        const cStr = String(v.className || '').trim();
+                        const sStr = String(v.section || '').trim();
+                        const adm = String(v.admissionNumber || '').trim();
                         if (adm.toLowerCase() === '1' + cStr.toLowerCase() + sStr.toLowerCase() && rStr && rStr !== '1') {
                             v.admissionNumber = rStr + cStr + sStr;
                         }
 
-                        const existing = findDuplicateVoter(v);
+                        // Map voter houseId
+                        if (v.houseId) {
+                            v.houseId = houseMap[v.houseId] || v.houseId;
+                        }
+
+                        // Map voter's encrypted selections if decryptable
+                        if (v.voteEncrypted && !v.pinHash) {
+                            try {
+                                const voteData = JSON.parse(atob(v.voteEncrypted));
+                                if (voteData && voteData.selections) {
+                                    const mappedSelections = {};
+                                    for (const catId in voteData.selections) {
+                                        const mappedCatId = categoryMap[catId] || catId;
+                                        const mappedNomId = nomineeMap[voteData.selections[catId]] || voteData.selections[catId];
+                                        mappedSelections[mappedCatId] = mappedNomId;
+                                    }
+                                    voteData.selections = mappedSelections;
+                                    v.voteEncrypted = btoa(JSON.stringify(voteData));
+                                }
+                            } catch (_) {}
+                        }
+
+                        const vAdm = String(v.admissionNumber || '').trim().toLowerCase();
+                        const existing = vAdm ? appData.voters.find(e => {
+                            const eAdm = String(e.admissionNumber || '').trim().toLowerCase();
+                            return eAdm === vAdm;
+                        }) : null;
+
                         if (existing) {
-                            if (voterConflict === 'overwrite') {
-                                const idx = appData.voters.indexOf(existing);
-                                appData.voters[idx] = { ...v };
+                            if (v.hasVoted && !existing.hasVoted) {
+                                existing.hasVoted = true;
+                                existing.skipped = v.skipped;
+                                existing.voteEncrypted = v.voteEncrypted;
+                                existing.voteTimestamp = v.voteTimestamp;
+                                existing.pinHash = v.pinHash;
                                 s.voters_overwritten++;
                             } else {
                                 s.voters_skipped++;
@@ -3016,14 +3114,16 @@ James Rodriguez,deputy_head_boy,,,Organize better events,I have great leadership
                         }
                     }
 
-                    // 5. Results — add vote counts (merge, not replace)
+                    // 5. Results — add vote counts (merge, not replace) with mapped IDs
                     if (imported.results && typeof imported.results === 'object') {
                         if (!appData.results) appData.results = {};
                         for (const catId in imported.results) {
-                            if (!appData.results[catId]) appData.results[catId] = {};
+                            const mappedCatId = categoryMap[catId] || catId;
+                            if (!appData.results[mappedCatId]) appData.results[mappedCatId] = {};
                             for (const nomId in imported.results[catId]) {
+                                const mappedNomId = nomineeMap[nomId] || nomId;
                                 const incoming = Number(imported.results[catId][nomId]) || 0;
-                                appData.results[catId][nomId] = (appData.results[catId][nomId] || 0) + incoming;
+                                appData.results[mappedCatId][mappedNomId] = (appData.results[mappedCatId][mappedNomId] || 0) + incoming;
                                 s.votes_added += incoming;
                             }
                         }
@@ -3031,8 +3131,12 @@ James Rodriguez,deputy_head_boy,,,Organize better events,I have great leadership
                 }
 
                 // ── Persist to localStorage & recalculate everything ──
+                console.log('[Import] Merge stats:', JSON.stringify(s));
+                console.log('[Import] Local results AFTER merge:', JSON.stringify(appData.results));
                 saveData();          // write merged appData to localStorage
                 initializeResults(); // ensure all categories have result entries
+                renderAll();         // immediately re-render stats, results, winners, rankings
+                updateButtonVisibility();
 
                 // Compute final stats for summary
                 const finalVoters    = appData.voters.length;
@@ -3074,7 +3178,7 @@ James Rodriguez,deputy_head_boy,,,Organize better events,I have great leadership
                         <tr style="border-bottom:1px solid #e0e7ef;">
                             <td style="padding:4px 0;color:#555;">🧑‍🎓 Voters</td>
                             <td style="padding:4px 8px;text-align:right;">
-                                <b style="color:#27ae60;">${s.voters_added} added</b>${s.voters_overwritten > 0 ? `, <b style="color:#e67e22;">${s.voters_overwritten} overwritten</b>` : ''}
+                                <b style="color:#27ae60;">${s.voters_added} added</b>${s.voters_overwritten > 0 ? `, <b style="color:#e67e22;">${s.voters_overwritten} updated</b>` : ''}
                             </td>
                             <td style="padding:4px 0;text-align:right;color:#999;">${s.voters_skipped} skipped</td>
                         </tr>
@@ -3093,15 +3197,7 @@ James Rodriguez,deputy_head_boy,,,Organize better events,I have great leadership
                     </div>
                 `;
                 summaryEl.classList.remove('hidden');
-                document.getElementById('jsonMergeOptions').classList.add('hidden');
-                document.getElementById('jsonMergeActions').innerHTML = `
-                    <button type="button" class="btn btn-primary" id="jsonMergeDoneBtn"><i class="fas fa-check"></i> Done</button>
-                `;
-                document.getElementById('jsonMergeDoneBtn').addEventListener('click', () => {
-                    closeJsonMergeModal();
-                    renderAll();              // recalculates stats, results, winners, rankings, vote %
-                    updateButtonVisibility();
-                });
+                document.getElementById('jsonMergeDoneRow').classList.remove('hidden');
 
                 showToast(`Import complete! ${s.voters_added} voters, ${s.votes_added} votes merged.`, 'success');
 
@@ -3109,8 +3205,7 @@ James Rodriguez,deputy_head_boy,,,Organize better events,I have great leadership
                 const errEl = document.getElementById('jsonMergeError');
                 errEl.textContent = 'Import error: ' + err.message;
                 errEl.classList.remove('hidden');
-                confirmBtn.disabled = false;
-                confirmBtn.innerHTML = '<i class="fas fa-check"></i> Proceed';
+                document.getElementById('jsonMergeOptions').classList.remove('hidden');
                 showToast('Import failed: ' + err.message, 'error');
             }
         }

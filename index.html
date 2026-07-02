@@ -348,6 +348,8 @@
                     <div id="resultsContainer"></div>
                     <div class="flex mt-12">
                         <button class="btn btn-sm btn-gold" id="publishResultsBtn"><i class="fas fa-flag"></i> Publish Results</button>
+                        <button class="btn btn-sm btn-outline" id="importResultsJsonBtn"><i class="fas fa-file-import"></i> Import All Data (JSON)</button>
+                        <button class="btn btn-sm btn-outline" id="exportResultsJsonBtn"><i class="fas fa-file-export"></i> Export All Data (JSON)</button>
                         <button class="btn btn-sm btn-outline" id="exportResultsCsvBtn"><i class="fas fa-file-export"></i> Export Results (CSV)</button>
                         <button class="btn btn-sm btn-outline" id="exportResultsExcelBtn"><i class="fas fa-file-excel"></i> Export (Excel)</button>
                         <button class="btn btn-sm btn-outline" id="resetElectionBtn"><i class="fas fa-redo"></i> Reset Election</button>
@@ -438,40 +440,34 @@
 
     <!-- JSON Import / Merge Modal -->
     <div class="modal-overlay hidden" id="jsonMergeModal">
-        <div class="modal-box" style="max-width:520px;">
+        <div class="modal" style="max-width:520px;">
             <div class="modal-title"><i class="fas fa-file-import"></i> Import Election Data (JSON)</div>
-            <div class="modal-sub">Choose how to handle the imported data:</div>
+            <div class="modal-sub">Choose how to handle the imported election data:</div>
 
             <!-- Mode selection -->
-            <div id="jsonMergeOptions" style="margin:18px 0 10px;">
+            <div id="jsonMergeOptions" style="margin:20px 0 10px; display:flex; flex-direction:column; gap:12px;">
+                <!-- Append (Merge) Button (Default/Primary) -->
+                <button type="button" class="btn btn-primary" id="jsonMergeAppendBtn" style="padding:14px 20px; text-align:left; display:flex; align-items:center; gap:12px; width:100%; justify-content: flex-start;">
+                    <i class="fas fa-layer-group" style="font-size:1.4rem;"></i>
+                    <div style="flex-grow:1;">
+                        <div style="font-weight:700; font-size:1.05rem;">Append (Merge) <span style="font-size:0.75rem; font-weight:normal; background:rgba(255,255,255,0.25); color:#fff; padding:2px 6px; border-radius:4px; margin-left:6px;">Default</span></div>
+                        <div style="font-size:0.8rem; font-weight:normal; opacity:0.9; margin-top:2px;">Combine imported records with existing data (voters, nominees, votes, houses, and categories). Recalculates combined results.</div>
+                    </div>
+                </button>
 
-                <!-- Option 1: Append (default) -->
-                <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:12px 14px;border:2px solid var(--primary-light);border-radius:10px;margin-bottom:12px;background:#f0f4fc;">
-                    <input type="radio" name="importMode" id="modeAppend" value="append" checked style="margin-top:3px;" />
-                    <span>
-                        <strong>&#x1F4CB; Append (Merge Data)</strong><br>
-                        <span class="text-muted text-small">Combine imported records with existing data. Merges voters, nominees, votes, houses, and categories. Skips duplicates (by Roll Number / Admission Number). Recalculates all statistics, turnout, winners, rankings, and vote percentages.</span>
-                    </span>
-                </label>
+                <!-- Override (Replace) Button -->
+                <button type="button" class="btn btn-danger" id="jsonMergeReplaceBtn" style="padding:14px 20px; text-align:left; display:flex; align-items:center; gap:12px; width:100%; justify-content: flex-start; background: #e67e22; border-color: #e67e22;">
+                    <i class="fas fa-exclamation-triangle" style="font-size:1.4rem;"></i>
+                    <div style="flex-grow:1;">
+                        <div style="font-weight:700; font-size:1.05rem;">Override (Replace)</div>
+                        <div style="font-size:0.8rem; font-weight:normal; opacity:0.9; margin-top:2px;">Completely replace all existing election data and settings with the imported file.</div>
+                    </div>
+                </button>
 
-                <!-- Voter conflict option (shown only when Append selected) -->
-                <div id="voterConflictWrap" style="margin:-4px 0 12px 28px;padding:10px 14px;background:#f9fbff;border:1px solid #dce3ec;border-radius:8px;">
-                    <label style="font-size:0.87rem;font-weight:600;">On duplicate voter (same Roll Number or Admission Number):</label>
-                    <select id="voterConflictMode" style="margin-top:6px;width:100%;padding:7px 10px;border:1.5px solid #dce3ec;border-radius:8px;">
-                        <option value="skip">Skip — keep existing voter record &amp; their votes</option>
-                        <option value="overwrite">Overwrite — replace voter record with imported data</option>
-                    </select>
-                </div>
-
-                <!-- Option 2: Override -->
-                <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:12px 14px;border:2px solid #f39c12;border-radius:10px;margin-bottom:12px;background:#fffbf0;">
-                    <input type="radio" name="importMode" id="modeReplace" value="replace" style="margin-top:3px;" />
-                    <span>
-                        <strong>&#x26A0;&#xFE0F; Override (Replace Existing Data)</strong><br>
-                        <span class="text-muted text-small">Completely replace the current election with the imported file. All existing voters, votes, nominees, and results will be permanently deleted.</span>
-                    </span>
-                </label>
-
+                <!-- Cancel Button -->
+                <button type="button" class="btn btn-outline" id="jsonMergeCancelBtn" style="padding:12px 20px; width:100%; justify-content:center; display:flex; align-items:center;">
+                    Cancel
+                </button>
             </div>
 
             <!-- Summary (shown after merge) -->
@@ -479,9 +475,8 @@
 
             <div id="jsonMergeError" class="hidden text-danger text-small" style="margin-bottom:10px;"></div>
 
-            <div class="btn-row" id="jsonMergeActions">
-                <button type="button" class="btn btn-primary" id="jsonMergeConfirmBtn"><i class="fas fa-check"></i> Proceed</button>
-                <button type="button" class="btn btn-outline" id="jsonMergeCancelBtn"><i class="fas fa-times"></i> Cancel</button>
+            <div class="btn-row hidden" id="jsonMergeDoneRow">
+                <button type="button" class="btn btn-primary" id="jsonMergeDoneBtn" style="width:100%; justify-content:center;"><i class="fas fa-check"></i> Done</button>
             </div>
         </div>
     </div>
