@@ -59,69 +59,44 @@
     let activeHomeVoterId = null;
     let activeHomeHouseId = null;
 
-    function loadData() {
+    async function loadData() {
         try {
-            const raw = localStorage.getItem(STORAGE_KEY);
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                // Ensure houses exist
-                if (!parsed.houses || parsed.houses.length === 0) {
-                    parsed.houses = getDefaultHouses();
-                }
-                // Ensure categories exist
-                if (!parsed.categories || parsed.categories.length === 0) {
-                    parsed.categories = getDefaultCategories();
-                }
-                // Ensure categories have houseSpecific and houseId fields
-                for (const cat of parsed.categories) {
-                    if (cat.houseSpecific === undefined) cat.houseSpecific = false;
-                    if (cat.houseId === undefined) cat.houseId = null;
-                }
-                // Ensure settings fields
-                if (!parsed.settings) parsed.settings = {};
-                if (!parsed.settings.electionMode) parsed.settings.electionMode = 'optional_pin';
-                if (parsed.settings.isActive === undefined) parsed.settings.isActive = true;
-                if (parsed.settings.resultsPublished === undefined) parsed.settings.resultsPublished = false;
-                if (parsed.settings.showSkipButton === undefined) parsed.settings.showSkipButton = true;
-                if (parsed.settings.showVerifyButton === undefined) parsed.settings.showVerifyButton = true;
-                if (parsed.settings.lastHomeHouseId === undefined) parsed.settings.lastHomeHouseId = null;
-                if (!parsed.settings.adminPasswordHash) {
-                    parsed.settings.adminPasswordHash = hashString('admin123');
-                }
-                // Ensure school name/subtitle
-                if (!parsed.schoolName) parsed.schoolName = 'Springfield High';
-                if (!parsed.schoolSubtitle) parsed.schoolSubtitle = 'Student Council Election 2026';
-                // Ensure voters have houseId
-                if (parsed.voters) {
-                    for (const v of parsed.voters) {
-                        if (v.houseId === undefined) v.houseId = null;
-                        if (v.admissionNumber === undefined) v.admissionNumber = v.rollNumber || '';
-                        if (v.className === undefined) v.className = v.class || '';
-                        if (v.section === undefined) v.section = '';
-                        if (v.rollNumber === undefined) v.rollNumber = v.admissionNumber || '';
-                    }
-                }
-                // Ensure nominees have houseId
-                if (parsed.nominees) {
-                    for (const n of parsed.nominees) {
-                        if (n.houseId === undefined) n.houseId = null;
-                    }
-                }
-                appData = parsed;
-                activeHomeHouseId = appData.settings.lastHomeHouseId || null;
+            const stored = localStorage.getItem(STORAGE_KEY);
+            if (stored) {
+                appData = JSON.parse(stored);
+                activeHomeHouseId = appData.settings?.lastHomeHouseId || null;
+                migrateVoterIds();
                 return;
             }
         } catch (_) { /* ignore */ }
         appData = getDefaultData();
-        appData.settings.adminPasswordHash = hashString('admin123');
-        appData.settings.lastHomeHouseId = null;
-        saveData();
+        activeHomeHouseId = null;
+    }
+
+    function migrateVoterIds() {
+        if (!appData || !appData.voters) return;
+        let changed = false;
+        for (const v of appData.voters) {
+            const rStr = (v.rollNumber || '').trim();
+            const cStr = (v.className || '').trim();
+            const sStr = (v.section || '').trim();
+            const adm = (v.admissionNumber || '').trim();
+            if (adm.toLowerCase() === '1' + cStr.toLowerCase() + sStr.toLowerCase() && rStr && rStr !== '1') {
+                v.admissionNumber = rStr + cStr + sStr;
+                changed = true;
+            }
+        }
+        if (changed) {
+            saveData();
+        }
     }
 
     function saveData() {
-        // Recompute results before saving? We'll compute on the fly.
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(appData));
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(appData));
+        } catch (_) { /* storage full or unavailable */ }
     }
+
 
     function hashString(str) {
         let hash = 0;
@@ -175,6 +150,59 @@
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     //  3.  HELPERS
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    const COLOR_MAP = {
+        'red': '#e74c3c',
+        'green': '#27ae60',
+        'yellow': '#f39c12',
+        'blue': '#3498db',
+        'orange': '#e67e22',
+        'purple': '#9b59b6',
+        'pink': '#e91e63',
+        'teal': '#1abc9c',
+        'cyan': '#00bcd4',
+        'brown': '#795548',
+        'grey': '#95a5a6',
+        'gray': '#95a5a6',
+        'black': '#2c3e50',
+        'white': '#ffffff',
+        'gold': '#d4a847',
+        'silver': '#bdc3c7',
+        'navy': '#1a3a6b',
+        'lime': '#cddc39',
+        'maroon': '#800000',
+        'indigo': '#3f51b5',
+        'magenta': '#e040fb'
+    };
+
+    function colorNameToHex(name) {
+        if (!name) return null;
+        const normalized = name.trim().toLowerCase();
+        if (/^#([0-9a-f]{3}){1,2}$/i.test(normalized)) {
+            return normalized;
+        }
+        if (COLOR_MAP[normalized]) {
+            return COLOR_MAP[normalized];
+        }
+        return null;
+    }
+
+    function hexToColorName(hex) {
+        if (!hex) return 'Blue';
+        const normalized = hex.trim().toLowerCase();
+        const name = Object.keys(COLOR_MAP).find(key => COLOR_MAP[key].toLowerCase() === normalized);
+        if (name) {
+            return name.charAt(0).toUpperCase() + name.slice(1);
+        }
+        return hex;
+    }
+
+    function getSupportedColorNames() {
+        return Object.keys(COLOR_MAP)
+            .filter(name => name !== 'gray')
+            .map(name => name.charAt(0).toUpperCase() + name.slice(1))
+            .join(', ');
+    }
 
     function generateId() {
         return Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
@@ -279,39 +307,20 @@
     }
 
     // House CRUD functions
-    function addHouse(name, color) {
+    async function addHouse(name, color) {
         if (!name.trim()) return false;
-        const id = name.trim().toLowerCase().replace(/\s+/g, '_') + '_' + Date.now().toString(36);
-        if (appData.houses.some(h => h.name.toLowerCase() === name.trim().toLowerCase())) {
+        if (appData.houses.find(h => h.name.toLowerCase() === name.trim().toLowerCase())) {
             showToast('House already exists.', 'error');
             return false;
         }
-        appData.houses.push({ id, name: name.trim(), color: color || '#3498db' });
+        appData.houses.push({ id: generateId(), name: name.trim(), color: color || '#3498db' });
         saveData();
         renderAllSettings();
         showToast(`House "${name.trim()}" added.`, 'success');
         return true;
     }
 
-    function removeHouse(id) {
-        // Check if any voters are assigned to this house
-        const votersInHouse = appData.voters.filter(v => v.houseId === id);
-        if (votersInHouse.length > 0) {
-            showToast(`Cannot remove house with ${votersInHouse.length} voters assigned. Reassign voters first.`, 'error');
-            return false;
-        }
-        // Check if any nominees are assigned to this house
-        const nomineesInHouse = appData.nominees.filter(n => n.houseId === id);
-        if (nomineesInHouse.length > 0) {
-            showToast(`Cannot remove house with ${nomineesInHouse.length} nominees assigned. Reassign nominees first.`, 'error');
-            return false;
-        }
-        // Check if any categories are house-specific for this house
-        const categoriesForHouse = appData.categories.filter(c => c.houseSpecific && c.houseId === id);
-        if (categoriesForHouse.length > 0) {
-            showToast(`Cannot remove house with ${categoriesForHouse.length} house-specific categories. Remove categories first.`, 'error');
-            return false;
-        }
+    async function removeHouse(id) {
         appData.houses = appData.houses.filter(h => h.id !== id);
         saveData();
         renderAllSettings();
@@ -319,7 +328,7 @@
         return true;
     }
 
-    function resetDefaultHouses() {
+    async function resetDefaultHouses() {
         if (!confirm('Reset to default houses? This will remove all current houses.')) return;
         appData.houses = getDefaultHouses();
         saveData();
@@ -604,6 +613,12 @@
         document.getElementById('castVoteBtn').style.display = canCast ? 'inline-flex' : 'none';
         document.getElementById('skipVoteBtn').style.display = showSkip ? 'inline-flex' : 'none';
         document.getElementById('verifyVoteBtn').style.display = showVerify ? 'inline-flex' : 'none';
+
+        const published = appData.settings.resultsPublished;
+        const publicResultsBtn = document.getElementById('publicResultsBtn');
+        if (publicResultsBtn) {
+            publicResultsBtn.style.display = published ? 'inline-flex' : 'none';
+        }
     }
 
     function renderSettingsGeneral() {
@@ -794,14 +809,15 @@
         });
     }
 
-    function renderStats() {
+    function renderStatsView(container) {
+        if (!container) return;
         const total = getTotalVoters();
         const voted = getVotedCount();
         const skipped = getSkippedCount();
         const pending = getPendingCount();
         const turnout = total > 0 ? Math.round((voted / total) * 100) : 0;
 
-        document.getElementById('statsGrid').innerHTML = `
+        container.innerHTML = `
             <div class="stat-card"><div class="stat-num">${total}</div><div class="stat-label">Total Voters</div></div>
             <div class="stat-card"><div class="stat-num">${voted}</div><div class="stat-label">Voted</div></div>
             <div class="stat-card"><div class="stat-num">${skipped}</div><div class="stat-label">Skipped</div></div>
@@ -812,24 +828,21 @@
         `;
     }
 
-    function renderResults() {
-        const container = document.getElementById('resultsContainer');
+    function renderStats() {
+        renderStatsView(document.getElementById('statsGrid'));
+    }
+
+    function renderResultsView(container, isAdmin) {
+        if (!container) return;
         const published = appData.settings.resultsPublished;
         const isActive = appData.settings.isActive;
 
-        if (!published && isActive) {
-            container.innerHTML =
-                '<div class="text-muted text-center" style="padding:20px 0;">Results are not yet published. Voting is still active.</div>';
+        // Non-admin can't see results if they aren't published
+        if (!isAdmin && !published) {
+            container.innerHTML = '<div class="text-muted text-center" style="padding:20px 0;">Results are not yet published.</div>';
             return;
         }
 
-        if (!published && !isActive) {
-            container.innerHTML =
-                '<div class="text-muted text-center" style="padding:20px 0;">Results are pending publication.</div>';
-            return;
-        }
-
-        // Show results per category
         let html = '';
         for (const cat of appData.categories) {
             const groups = cat.houseSpecific ?
@@ -838,32 +851,121 @@
                     nominees: getNomineesByCategoryAndHouse(cat.id, house.id)
                 })) :
                 [{ title: cat.name, nominees: getNomineesByCategory(cat.id) }];
+
             const catResults = appData.results[cat.id] || {};
+
             for (const group of groups) {
-                html += `<h5 style="margin-top:16px;color:var(--primary);">${group.title}</h5>`;
                 if (group.nominees.length === 0) {
-                    html += '<div class="text-muted text-small">No nominees.</div>';
                     continue;
                 }
-                const maxVotes = Math.max(1, ...group.nominees.map(n => catResults[n.id] || 0));
-                for (const n of group.nominees) {
+
+                // Calculate total votes in this category group
+                const totalGroupVotes = group.nominees.reduce((sum, n) => sum + (catResults[n.id] || 0), 0);
+
+                // Sort nominees by votes descending (Candidate ranking)
+                const sortedNominees = [...group.nominees].sort((a, b) => {
+                    const votesA = catResults[a.id] || 0;
+                    const votesB = catResults[b.id] || 0;
+                    return votesB - votesA;
+                });
+
+                // Find max and second max votes to identify winner and runner-up
+                const uniqueVotes = [...new Set(sortedNominees.map(n => catResults[n.id] || 0))].sort((a, b) => b - a);
+                const maxVotes = uniqueVotes[0] || 0;
+                const secondMaxVotes = uniqueVotes[1] || 0;
+
+                html += `
+                    <div class="result-category-card">
+                        <div class="result-category-header">
+                            <h5>${group.title}</h5>
+                            <span class="total-group-votes"><i class="fas fa-vote-yea"></i> ${totalGroupVotes} vote${totalGroupVotes !== 1 ? 's' : ''} cast</span>
+                        </div>
+                        <div class="result-nominees-list">
+                `;
+
+                sortedNominees.forEach((n, index) => {
                     const v = catResults[n.id] || 0;
-                    const pct = maxVotes > 0 ? Math.round((v / maxVotes) * 100) : 0;
+                    const pct = totalGroupVotes > 0 ? Math.round((v / totalGroupVotes) * 100) : 0;
+                    const isWinner = v === maxVotes && maxVotes > 0;
+                    const isRunnerUp = v === secondMaxVotes && secondMaxVotes > 0 && secondMaxVotes < maxVotes;
+                    const rank = index + 1;
+
+                    const photoHtml = n.photo ?
+                        `<img src="${n.photo}" alt="${n.name}" onerror="this.style.display='none';this.parentElement.textContent='👤';" />` :
+                        '👤';
+
+                    let cardClass = '';
+                    let rankClass = '';
+                    let rankContent = `#${rank}`;
+                    let badgeHtml = '';
+                    let fillClass = '';
+
+                    if (isWinner) {
+                        cardClass = 'winner-card';
+                        rankClass = 'rank-winner';
+                        rankContent = '<i class="fas fa-trophy winner-trophy"></i>';
+                        badgeHtml = '<span class="winner-badge"><i class="fas fa-crown"></i> Winner</span>';
+                        fillClass = 'fill-winner';
+                    } else if (isRunnerUp) {
+                        cardClass = 'runnerup-card';
+                        rankClass = 'rank-runnerup';
+                        rankContent = '<i class="fas fa-award runnerup-trophy"></i>';
+                        badgeHtml = '<span class="runnerup-badge"><i class="fas fa-award"></i> Runner-up</span>';
+                        fillClass = 'fill-runnerup';
+                    }
+
                     html += `
-                        <div class="result-bar-wrap">
-                            <div class="rb-label">
-                                <span>${n.name}</span>
-                                <span><strong>${v}</strong> vote${v!==1?'s':''}</span>
+                        <div class="result-nominee-card ${cardClass}">
+                            <div class="result-nominee-rank ${rankClass}">
+                                ${rankContent}
                             </div>
-                            <div class="rb-track">
-                                <div class="rb-fill ${cat.id.includes('girl')?'gold':''}" style="width:${pct}%;"></div>
+                            <div class="result-nominee-avatar">${photoHtml}</div>
+                            <div class="result-nominee-details">
+                                <div class="result-nominee-name">
+                                    <span>${n.name}</span>
+                                    ${badgeHtml}
+                                </div>
+                                <div class="result-bar-container">
+                                    <div class="result-bar-track">
+                                        <div class="result-bar-fill ${fillClass}" style="width: ${pct}%;"></div>
+                                    </div>
+                                    <div class="result-bar-stats">
+                                        <span class="pct-text">${pct}%</span>
+                                        <span class="votes-text"><strong>${v}</strong> vote${v !== 1 ? 's' : ''}</span>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     `;
-                }
+                });
+
+                html += `
+                        </div>
+                    </div>
+                `;
             }
         }
-        container.innerHTML = html;
+
+        if (!html) {
+            const hasNominees = appData.nominees && appData.nominees.length > 0;
+            const title = hasNominees ? 'No votes have been recorded yet.' : 'No Results Available Yet';
+            container.innerHTML = `
+                <div style="text-align: center; padding: 50px 20px;">
+                    <i class="fas fa-chart-bar" style="font-size: 3.5rem; color: #bdc3c7; margin-bottom: 15px;"></i>
+                    <h3 style="color: var(--secondary); font-weight: 600; margin-bottom: 10px;">${title}</h3>
+                    <p style="color: #7f8c8d; font-size: 0.95rem; max-width: 400px; margin: 0 auto; line-height: 1.5;">
+                        Results will appear here once voting has started and at least one vote has been recorded.
+                    </p>
+                </div>
+            `;
+        } else {
+            container.innerHTML = html;
+        }
+    }
+
+    function renderResults() {
+        const container = document.getElementById('resultsContainer');
+        renderResultsView(container, true);
     }
 
     function updateStatusBadge() {
@@ -882,132 +984,227 @@
         }
     }
 
+    function openPublicResults() {
+        settingsUnlocked = false;
+        document.getElementById('settingsPage').classList.remove('active');
+        document.getElementById('homepage').style.display = 'none';
+        
+        const publicResultsPage = document.getElementById('publicResultsPage');
+        if (publicResultsPage) {
+            publicResultsPage.classList.add('active');
+            publicResultsPage.style.display = 'block';
+        }
+        
+        renderStatsView(document.getElementById('publicStatsGrid'));
+        renderResultsView(document.getElementById('publicResultsContainer'), false);
+    }
+
+    function closePublicResults() {
+        const publicResultsPage = document.getElementById('publicResultsPage');
+        if (publicResultsPage) {
+            publicResultsPage.classList.remove('active');
+            publicResultsPage.style.display = 'none';
+        }
+        document.getElementById('homepage').style.display = 'block';
+        renderAll();
+    }
+
+    function getResultsCsvData() {
+        if (appData.nominees.length === 0) return null;
+
+        const schoolName = appData.branding?.schoolName || 'Your School';
+        const electionTitle = appData.branding?.electionTitle || 'Student Council Election';
+        const now = new Date();
+        const formattedDate = now.getFullYear() + '-' + 
+            String(now.getMonth() + 1).padStart(2, '0') + '-' + 
+            String(now.getDate()).padStart(2, '0') + ' ' + 
+            now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+        const totalVoters = appData.voters.length;
+        const totalVotesCast = appData.voters.filter(v => v.hasVoted).length;
+        const turnoutPct = totalVoters > 0 ? ((totalVotesCast / totalVoters) * 100).toFixed(1) + '%' : '0.0%';
+        const resultsPublished = appData.settings?.resultsPublished ? 'Yes' : 'No';
+
+        let csv = `School Name,${csvEscape(schoolName)}\n`;
+        csv += `Election Title,${csvEscape(electionTitle)}\n`;
+        csv += `Export Date,${csvEscape(formattedDate)}\n`;
+        csv += `Total Registered Voters,${totalVoters}\n`;
+        csv += `Total Votes Cast,${totalVotesCast}\n`;
+        csv += `Turnout,${turnoutPct}\n`;
+        csv += `Results Published,${resultsPublished}\n\n`;
+
+        csv += 'Candidate Name,Category,House,Votes,Vote Percentage,Result,Rank\n';
+
+        for (const cat of appData.categories) {
+            const groups = cat.houseSpecific ?
+                appData.houses.map(house => ({
+                    houseName: house.name,
+                    nominees: getNomineesByCategoryAndHouse(cat.id, house.id)
+                })) :
+                [{ houseName: 'N/A', nominees: getNomineesByCategory(cat.id) }];
+            
+            for (const group of groups) {
+                if (group.nominees.length === 0) continue;
+                
+                const catResults = appData.results[cat.id] || {};
+                
+                let nomineesWithStats = group.nominees.map(n => ({
+                    ...n, 
+                    votes: catResults[n.id] || 0
+                }));
+                
+                nomineesWithStats.sort((a, b) => b.votes - a.votes);
+                
+                const totalGroupVotes = nomineesWithStats.reduce((a, b) => a + b.votes, 0);
+                const maxVotes = nomineesWithStats.length > 0 ? nomineesWithStats[0].votes : 0;
+                const winnersCount = nomineesWithStats.filter(n => n.votes === maxVotes && maxVotes > 0).length;
+
+                let currentRank = 0;
+                let previousVotes = -1;
+
+                for (let i = 0; i < nomineesWithStats.length; i++) {
+                    const n = nomineesWithStats[i];
+                    
+                    if (n.votes !== previousVotes) {
+                        currentRank++;
+                    }
+                    previousVotes = n.votes;
+                    
+                    const pct = totalGroupVotes > 0 ? ((n.votes / totalGroupVotes) * 100).toFixed(2) + '%' : '0.00%';
+                    
+                    let resultStr = 'Lost';
+                    if (n.votes === maxVotes && maxVotes > 0) {
+                        resultStr = winnersCount > 1 ? 'Won (Tie)' : 'Won';
+                    }
+
+                    const houseName = n.houseId ? (getHouseById(n.houseId)?.name || 'Unknown') : group.houseName;
+                    const finalHouseName = houseName === 'N/A' || !houseName ? 'N/A' : houseName;
+                    
+                    csv += [
+                        n.name,
+                        cat.name,
+                        finalHouseName,
+                        n.votes,
+                        pct,
+                        resultStr,
+                        currentRank
+                    ].map(csvEscape).join(',') + '\n';
+                }
+            }
+        }
+        return csv;
+    }
+
+    function exportResultsCsv() {
+        const csv = getResultsCsvData();
+        if (!csv) {
+            showToast('No results to export.', 'error');
+            return;
+        }
+        downloadCsv(csv, `election_results_${new Date().toISOString().slice(0,10)}.csv`);
+    }
+
+    function exportResultsExcel() {
+        const csv = getResultsCsvData();
+        if (!csv) {
+            showToast('No results to export.', 'error');
+            return;
+        }
+        generateExcelFromCsv(csv, `election_results_${new Date().toISOString().slice(0,10)}.xlsx`);
+    }
+
+    function getCategoriesCsvData() {
+        if (appData.categories.length === 0) return null;
+        let csv = 'name,houseSpecific,houseId\n';
+        for (const cat of appData.categories) {
+            csv += [
+                cat.name,
+                cat.houseSpecific ? 'true' : 'false',
+                cat.houseId || ''
+            ].map(csvEscape).join(',') + '\n';
+        }
+        return csv;
+    }
+
+    function exportCategories() {
+        const csv = getCategoriesCsvData();
+        if (!csv) { showToast('No categories to export.', 'error'); return; }
+        downloadCsv(csv, `categories_${new Date().toISOString().slice(0,10)}.csv`);
+    }
+
+    function exportCategoriesExcel() {
+        const csv = getCategoriesCsvData();
+        if (!csv) { showToast('No categories to export.', 'error'); return; }
+        generateExcelFromCsv(csv, `categories_${new Date().toISOString().slice(0,10)}.xlsx`);
+    }
+
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     //  6.  CORE OPERATIONS
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    function addCategory(name, houseSpecific = false, houseId = null) {
+    async function addCategory(name, houseSpecific = false, houseId = null) {
         if (!name.trim()) return false;
-        const id = name.trim().toLowerCase().replace(/\s+/g, '_') + '_' + Date.now().toString(36);
-        if (appData.categories.some(c => c.name.toLowerCase() === name.trim().toLowerCase())) {
+        if (appData.categories.find(c => c.name.toLowerCase() === name.trim().toLowerCase())) {
             showToast('Category already exists.', 'error');
             return false;
         }
-        appData.categories.push({ id, name: name.trim(), houseSpecific, houseId });
-        appData.results[id] = {};
+        appData.categories.push({ id: generateId(), name: name.trim(), houseSpecific: !!houseSpecific, houseId: houseId || null });
         saveData();
         renderAllSettings();
         showToast(`Category "${name.trim()}" added.`, 'success');
         return true;
     }
 
-    function removeCategory(id) {
-        // Remove all nominees in this category
-        const nominees = getNomineesByCategory(id);
-        for (const n of nominees) {
-            appData.nominees = appData.nominees.filter(nn => nn.id !== n.id);
-            // Remove from results
-            for (const catId in appData.results) {
-                delete appData.results[catId][n.id];
-            }
-        }
+    async function removeCategory(id) {
         appData.categories = appData.categories.filter(c => c.id !== id);
-        delete appData.results[id];
+        appData.nominees = appData.nominees.filter(n => n.categoryId !== id);
+        if (appData.results) delete appData.results[id];
         saveData();
         renderAllSettings();
         showToast('Category removed.', 'info');
     }
 
-    function resetDefaultCategories() {
+    async function resetDefaultCategories() {
         if (!confirm('Reset to default categories? This will remove all current categories and their nominees.')) return;
         appData.categories = getDefaultCategories();
-        appData.nominees = [];
+        appData.nominees = appData.nominees.filter(n => appData.categories.find(c => c.id === n.categoryId));
         appData.results = {};
-        for (const cat of appData.categories) {
-            appData.results[cat.id] = {};
-        }
+        for (const cat of appData.categories) appData.results[cat.id] = {};
         saveData();
         renderAllSettings();
         showToast('Categories reset to default.', 'success');
     }
 
-    function addNominee(name, categoryId, photo, problems, whyMe, houseId = null) {
+    async function addNominee(name, categoryId, photo, problems, whyMe, houseId = null) {
         if (!name || !categoryId) return false;
-        if (appData.nominees.some(n => n.name.toLowerCase() === name.toLowerCase() && n.categoryId === categoryId)) {
-            showToast('A nominee with this name already exists in this category.', 'error');
-            return false;
-        }
-        const nominee = {
-            id: generateId(),
-            name: name.trim(),
-            categoryId: categoryId,
-            houseId: houseId,
-            photo: photo || '',
-            manifesto: {
-                problems: problems || '',
-                promises: problems || '',
-                whyMe: whyMe || ''
-            }
-        };
-        appData.nominees.push(nominee);
-        // Initialize results for this nominee (just in case)
-        for (const catId in appData.results) {
-            if (appData.results[catId][nominee.id] === undefined) {
-                appData.results[catId][nominee.id] = 0;
-            }
-        }
+        appData.nominees.push({
+            id: generateId(), name: name.trim(), categoryId, houseId: houseId || null,
+            photo: photo || '', manifesto: { problems: problems || '', whyMe: whyMe || '' }
+        });
         saveData();
         renderAllSettings();
         showToast(`Added ${name} to ${getCategoryById(categoryId)?.name || ''}`, 'success');
         return true;
     }
 
-    function updateNominee(id, name, categoryId, photo, problems, whyMe, houseId = null) {
-        const nominee = getNomineeById(id);
-        if (!nominee || !name || !categoryId) return false;
-        if (appData.nominees.some(n => n.id !== id && n.name.toLowerCase() === name.toLowerCase() && n.categoryId === categoryId)) {
-            showToast('A nominee with this name already exists in this category.', 'error');
-            return false;
-        }
-        const previousCategoryId = nominee.categoryId;
-        nominee.name = name.trim();
-        nominee.categoryId = categoryId;
-        nominee.houseId = houseId;
-        nominee.photo = photo || '';
-        nominee.manifesto = {
-            problems: problems || '',
-            promises: problems || '',
-            whyMe: whyMe || ''
-        };
-        if (!appData.results[categoryId]) {
-            appData.results[categoryId] = {};
-        }
-        if (previousCategoryId !== categoryId) {
-            const previousVotes = appData.results[previousCategoryId]?.[id] || 0;
-            if (appData.results[previousCategoryId]) {
-                delete appData.results[previousCategoryId][id];
-            }
-            appData.results[categoryId][id] = (appData.results[categoryId][id] || 0) + previousVotes;
-        } else if (appData.results[categoryId][id] === undefined) {
-            appData.results[categoryId][id] = 0;
-        }
+    async function updateNominee(id, name, categoryId, photo, problems, whyMe, houseId = null) {
+        if (!name || !categoryId) return false;
+        const idx = appData.nominees.findIndex(n => n.id === id);
+        if (idx === -1) return false;
+        appData.nominees[idx] = { ...appData.nominees[idx], name: name.trim(), categoryId,
+            houseId: houseId || null, photo: photo || '',
+            manifesto: { problems: problems || '', whyMe: whyMe || '' } };
         saveData();
         renderAllSettings();
-        showToast(`Updated ${nominee.name}`, 'success');
+        showToast(`Updated nominee ${name}`, 'success');
         return true;
     }
 
-    function removeNominee(id) {
+    async function removeNominee(id) {
         const nominee = getNomineeById(id);
         if (!nominee) return;
-        if (editingNomineeId === id) {
-            resetNomineeForm();
-        }
+        if (editingNomineeId === id) resetNomineeForm();
         appData.nominees = appData.nominees.filter(n => n.id !== id);
-        // Remove from results
-        for (const catId in appData.results) {
-            delete appData.results[catId][id];
-        }
         saveData();
         renderAllSettings();
         showToast(`Removed ${nominee.name}`, 'info');
@@ -1094,14 +1291,97 @@
         return value.toLowerCase().replace(/[^a-z0-9]/g, '');
     }
 
+    function downloadCsv(csv, filename) {
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('Exported successfully.', 'success');
+    }
+
+    async function generateExcelFromCsv(csvText, filename) {
+        if (!window.ExcelJS) {
+            showToast('Excel library not loaded.', 'error');
+            return;
+        }
+        const lines = csvText.split(/\r?\n/);
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Export Data');
+        
+        let headerRow = null;
+        
+        lines.forEach(line => {
+            if (line.trim() === '') {
+                worksheet.addRow([]);
+            } else {
+                const rowData = parseCsvLine(line);
+                const row = worksheet.addRow(rowData);
+                if (!headerRow && rowData.length >= 3) {
+                    headerRow = row;
+                }
+            }
+        });
+
+        if (!headerRow) headerRow = worksheet.getRow(1);
+
+        headerRow.font = { bold: true };
+        headerRow.alignment = { horizontal: 'center' };
+        
+        worksheet.views = [
+            { state: 'frozen', xSplit: 0, ySplit: headerRow.number }
+        ];
+
+        const colCount = headerRow.actualCellCount || (headerRow.values ? headerRow.values.length - 1 : 1);
+        worksheet.autoFilter = {
+            from: { row: headerRow.number, column: 1 },
+            to: { row: headerRow.number, column: colCount }
+        };
+
+        worksheet.columns.forEach(column => {
+            let maxLength = 0;
+            column.eachCell({ includeEmpty: true }, function(cell) {
+                let text = cell.value ? cell.value.toString() : '';
+                let linesInCell = text.split('\n');
+                linesInCell.forEach(l => {
+                    if (l.length > maxLength) maxLength = l.length;
+                });
+            });
+            column.width = maxLength < 10 ? 10 : (maxLength > 60 ? 60 : maxLength + 2);
+            column.alignment = { wrapText: true, vertical: 'top' };
+        });
+
+        const buffer = await workbook.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('Exported successfully.', 'success');
+    }
+
     function buildVoterRecord(name, admissionNumber, className, section, rollNumber, houseId) {
+        let finalAdmission = admissionNumber.trim();
+        const rStr = (rollNumber || '').trim();
+        const cStr = (className || '').trim();
+        const sStr = (section || '').trim();
+
+        // Auto-correct template IDs like 1IIIA where Roll is not 1 to [Roll][Class][Section]
+        if (finalAdmission.toLowerCase() === '1' + cStr.toLowerCase() + sStr.toLowerCase() && rStr && rStr !== '1') {
+            finalAdmission = rStr + cStr + sStr;
+        }
+
         return {
             id: generateId(),
             name: name.trim(),
-            admissionNumber: admissionNumber.trim(),
-            rollNumber: (rollNumber || '').trim(),
-            className: (className || '').trim(),
-            section: (section || '').trim(),
+            admissionNumber: finalAdmission,
+            rollNumber: rStr,
+            className: cStr,
+            section: sStr,
             houseId: houseId || null,
             hasVoted: false,
             skipped: false,
@@ -1111,43 +1391,30 @@
         };
     }
 
-    function addVoter(name, admissionNumber, className, section, rollNumber, houseId = null) {
+    async function addVoter(name, admissionNumber, className, section, rollNumber, houseId = null) {
         if (!name || !admissionNumber) return false;
-        if (appData.voters.some(v => (v.admissionNumber || '').toLowerCase() === admissionNumber.toLowerCase())) {
-            showToast('A voter with this admission number already exists.', 'error');
-            return false;
-        }
-        if (houseId && !getHouseById(houseId)) {
-            showToast('Selected house was not found.', 'error');
-            return false;
-        }
-        appData.voters.push(buildVoterRecord(name, admissionNumber, className, section, rollNumber, houseId));
+        const dup = appData.voters.find(v =>
+            v.admissionNumber === admissionNumber.trim()
+        );
+        if (dup) { showToast('Voter with this admission number already exists.', 'error'); return false; }
+        const voter = buildVoterRecord(name, admissionNumber, className, section, rollNumber, houseId);
+        appData.voters.push(voter);
         saveData();
         renderAllSettings();
         showToast(`Added voter ${name.trim()}.`, 'success');
         return true;
     }
 
-    function updateVoter(id, name, admissionNumber, className, section, rollNumber, houseId = null) {
-        const voter = getVoterById(id);
-        if (!voter || !name || !admissionNumber) return false;
-        if (appData.voters.some(v => v.id !== id && (v.admissionNumber || '').toLowerCase() === admissionNumber.toLowerCase())) {
-            showToast('A voter with this admission number already exists.', 'error');
-            return false;
-        }
-        if (houseId && !getHouseById(houseId)) {
-            showToast('Selected house was not found.', 'error');
-            return false;
-        }
-        voter.name = name.trim();
-        voter.admissionNumber = admissionNumber.trim();
-        voter.className = (className || '').trim();
-        voter.section = (section || '').trim();
-        voter.rollNumber = (rollNumber || '').trim();
-        voter.houseId = houseId || null;
+    async function updateVoter(id, name, admissionNumber, className, section, rollNumber, houseId = null) {
+        if (!name || !admissionNumber) return false;
+        const idx = appData.voters.findIndex(v => v.id === id);
+        if (idx === -1) { showToast('Voter not found.', 'error'); return false; }
+        appData.voters[idx] = { ...appData.voters[idx], name: name.trim(),
+            admissionNumber: admissionNumber.trim(), rollNumber: rollNumber || admissionNumber,
+            className: className, section: section, houseId: houseId };
         saveData();
         renderAllSettings();
-        showToast(`Updated voter ${voter.name}.`, 'success');
+        showToast(`Updated voter ${name.trim()}.`, 'success');
         return true;
     }
 
@@ -1187,74 +1454,186 @@
         document.getElementById('addVoterForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
-    function importVoters(csvText) {
+    async function importVoters(csvText) {
         const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== '');
         if (lines.length === 0) {
-            showToast('CSV is empty.', 'error');
+            showToast('CSV is empty or invalid.', 'error');
             return;
         }
-        let added = 0,
-            skipped = 0;
         let startIdx = 0;
-        let headerMap = null;
+        let headerMap = { name: 0, admissionnumber: 1, class: 2, section: 3, rollnumber: 4, houseid: 5 };
+        let hasHeader = false;
         const first = parseCsvLine(lines[0]).map(normalizeHeader);
         if (first.some(h => ['votername', 'admissionnumber', 'admissionno', 'voterid', 'rollnumber', 'name'].includes(h))) {
             startIdx = 1;
+            hasHeader = true;
             headerMap = {};
             first.forEach((header, idx) => {
-                headerMap[header] = idx;
+                let key = header;
+                if (header === 'votername' || header === 'name') key = 'name';
+                if (header === 'admissionnumber' || header === 'admissionno' || header === 'voterid') key = 'admissionnumber';
+                if (header === 'rollnumber' || header === 'rollno' || header === 'roll') key = 'rollnumber';
+                if (header === 'houseid') key = 'houseid';
+                headerMap[key] = idx;
             });
+            if (headerMap.name === undefined || headerMap.admissionnumber === undefined) {
+                showToast('Malformed CSV: Missing required columns for voter name or admission number.', 'error');
+                return;
+            }
         }
+
+        const rows = [];
         for (let i = startIdx; i < lines.length; i++) {
             const parts = parseCsvLine(lines[i]);
-            if (parts.length < 2) continue;
-            let name = '';
-            let admissionNumber = '';
-            let className = '';
-            let section = '';
-            let rollNumber = '';
-            let houseId = '';
-
-            if (headerMap) {
-                name = parts[headerMap.votername ?? headerMap.name] || '';
-                admissionNumber = parts[headerMap.admissionnumber ?? headerMap.admissionno ?? headerMap.voterid] || '';
-                className = parts[headerMap.class] || '';
-                section = parts[headerMap.section] || '';
-                rollNumber = parts[headerMap.rollnumber ?? headerMap.rollno ?? headerMap.roll] || '';
-                houseId = parts[headerMap.houseid] || '';
-                if (!admissionNumber) admissionNumber = rollNumber;
-            } else if (parts.length >= 6) {
-                [name, admissionNumber, className, section, rollNumber, houseId] = parts;
-            } else {
-                rollNumber = parts[0] || '';
-                admissionNumber = rollNumber;
-                name = parts.slice(1).join(',').trim();
+            if (parts.length === 0 || (parts.length === 1 && parts[0] === '')) continue;
+            const name = (parts[headerMap.name] || '').trim();
+            const admissionNumber = (parts[headerMap.admissionnumber] || '').trim();
+            const className = (parts[headerMap.class] || '').trim();
+            const section = (parts[headerMap.section] || '').trim();
+            const rollNumber = (parts[headerMap.rollnumber] || '').trim();
+            const houseId = (parts[headerMap.houseid] || '').trim() || null;
+            let finalAdmission = admissionNumber.trim();
+            const rStr = (rollNumber || '').trim();
+            const cStr = (className || '').trim();
+            const sStr = (section || '').trim();
+            if (finalAdmission.toLowerCase() === '1' + cStr.toLowerCase() + sStr.toLowerCase() && rStr && rStr !== '1') {
+                finalAdmission = rStr + cStr + sStr;
             }
-
-            if (!name || !admissionNumber) continue;
-            if (appData.voters.some(v => (v.admissionNumber || '').toLowerCase() === admissionNumber.toLowerCase())) {
-                skipped++;
-                continue;
-            }
-            // Validate houseId if provided
-            if (houseId && !getHouseById(houseId)) {
-                showToast(`House "${houseId}" not found for voter ${admissionNumber}. Skipping.`, 'error');
-                skipped++;
-                continue;
-            }
-            appData.voters.push(buildVoterRecord(name, admissionNumber, className, section, rollNumber, houseId));
-            added++;
+            rows.push({ name, admission_number: finalAdmission, class_name: cStr, section: sStr, roll_number: rStr, house_id: houseId });
         }
+
+        // Count how many incoming voters would be duplicates
+        // Duplicate key = Admission Number ONLY (roll numbers are NOT globally unique across classes)
+        const duplicates = rows.filter(r =>
+            r.admission_number && appData.voters.find(v =>
+                v.admissionNumber && v.admissionNumber.trim() === r.admission_number.trim()
+            )
+        );
+        const newVoters = rows.filter(r =>
+            !appData.voters.find(v =>
+                v.admissionNumber && v.admissionNumber.trim() === r.admission_number.trim()
+            )
+        );
+
+        let added = newVoters.length;
+        let skipped = 0;
+        let overwritten = 0;
+
+        // Add new voters right away
+        for (const r of newVoters) {
+            appData.voters.push(buildVoterRecord(r.name, r.admission_number, r.class_name, r.section, r.roll_number, r.house_id));
+        }
+
+        if (duplicates.length > 0) {
+            // Build and show inline choice dialog
+            const choice = await showCsvImportChoiceDialog(
+                `${newVoters.length} new voter(s) will be added.\n${duplicates.length} voter(s) already exist (same Admission Number).\n\nWhat should happen to the duplicates?`,
+                duplicates.map(r => r.name)
+            );
+            if (choice === 'cancel') {
+                // Undo the new voter additions
+                for (let i = 0; i < newVoters.length; i++) appData.voters.pop();
+                showToast('Import cancelled.', 'info');
+                return;
+            }
+            if (choice === 'override') {
+                for (const r of duplicates) {
+                    const idx = appData.voters.findIndex(v =>
+                        v.admissionNumber && v.admissionNumber.trim() === r.admission_number.trim()
+                    );
+                    if (idx !== -1) {
+                        appData.voters[idx] = {
+                            ...appData.voters[idx],
+                            name: r.name,
+                            className: r.class_name,
+                            section: r.section,
+                            rollNumber: r.roll_number,
+                            houseId: r.house_id || appData.voters[idx].houseId
+                        };
+                        overwritten++;
+                    }
+                }
+            } else {
+                // merge = skip duplicates
+                skipped = duplicates.length;
+            }
+        }
+
         saveData();
         renderAllSettings();
-        showToast(`Imported ${added} voters (${skipped} duplicates skipped).`, 'success');
+        const parts = [];
+        if (added > 0) parts.push(`${added} added`);
+        if (overwritten > 0) parts.push(`${overwritten} updated`);
+        if (skipped > 0) parts.push(`${skipped} duplicates skipped`);
+        showToast(`Voters imported: ${parts.join(', ')}.`, 'success');
     }
 
-    function exportVoters() {
-        if (appData.voters.length === 0) {
-            showToast('No voters to export.', 'error');
-            return;
-        }
+    // Helper: show a CSV import choice dialog (Merge / Override / Cancel)
+    // Returns a Promise that resolves to 'merge', 'override', or 'cancel'
+    function showCsvImportChoiceDialog(message, duplicateNames) {
+        return new Promise(resolve => {
+            // Remove any existing dialog
+            const existing = document.getElementById('csvImportChoiceDialog');
+            if (existing) existing.remove();
+
+            const overlay = document.createElement('div');
+            overlay.id = 'csvImportChoiceDialog';
+            overlay.style.cssText = `
+                position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:9999;
+                display:flex;align-items:center;justify-content:center;padding:20px;
+            `;
+
+            const truncatedNames = duplicateNames.slice(0, 5).join(', ') +
+                (duplicateNames.length > 5 ? ` …and ${duplicateNames.length - 5} more` : '');
+
+            overlay.innerHTML = `
+                <div style="background:#fff;border-radius:16px;padding:28px 28px 20px;max-width:440px;width:100%;
+                            box-shadow:0 20px 60px rgba(0,0,0,0.25);font-family:inherit;">
+                    <div style="font-size:1.1rem;font-weight:700;margin-bottom:8px;">
+                        <i class="fas fa-file-import" style="color:var(--primary);"></i>
+                        &nbsp;CSV Import — Duplicate Voters Found
+                    </div>
+                    <div style="font-size:0.88rem;color:#555;margin-bottom:14px;line-height:1.6;">
+                        <b style="color:#27ae60;">${duplicateNames.length > 0 ? message.split('\n')[0] : ''}</b><br>
+                        <b style="color:#e67e22;">${duplicateNames.length} voter(s) already exist</b> with the same Admission Number:<br>
+                        <span style="color:#888;font-size:0.84rem;">${truncatedNames}</span>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:10px;">
+                        <button id="csvChoiceMerge" style="padding:10px 16px;border-radius:10px;border:2px solid var(--primary);
+                            background:#f0f4fc;color:var(--primary);font-weight:700;cursor:pointer;text-align:left;font-size:0.9rem;">
+                            📋 <strong>Merge (Skip Duplicates)</strong><br>
+                            <span style="font-weight:400;font-size:0.82rem;color:#555;">Add only new voters. Keep existing voter records unchanged.</span>
+                        </button>
+                        <button id="csvChoiceOverride" style="padding:10px 16px;border-radius:10px;border:2px solid #e67e22;
+                            background:#fffbf0;color:#b7550a;font-weight:700;cursor:pointer;text-align:left;font-size:0.9rem;">
+                            ⚠️ <strong>Override Duplicates</strong><br>
+                            <span style="font-weight:400;font-size:0.82rem;color:#555;">Update duplicate voter records with data from the CSV file.</span>
+                        </button>
+                        <button id="csvChoiceCancel" style="padding:9px 16px;border-radius:10px;border:1.5px solid #dce3ec;
+                            background:#f8f9fa;color:#666;font-weight:600;cursor:pointer;font-size:0.88rem;">
+                            ✕ Cancel Import
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(overlay);
+
+            const cleanup = (result) => {
+                overlay.remove();
+                resolve(result);
+            };
+
+            document.getElementById('csvChoiceMerge').addEventListener('click', () => cleanup('merge'));
+            document.getElementById('csvChoiceOverride').addEventListener('click', () => cleanup('override'));
+            document.getElementById('csvChoiceCancel').addEventListener('click', () => cleanup('cancel'));
+            // Click outside to cancel
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup('cancel'); });
+        });
+    }
+
+    function getVotersCsvData() {
+        if (appData.voters.length === 0) return null;
         let csv = 'voter name,admission number,class,section,roll number,houseId\n';
         for (const voter of appData.voters) {
             csv += [
@@ -1266,91 +1645,90 @@
                 voter.houseId || ''
             ].map(csvEscape).join(',') + '\n';
         }
-        const blob = new Blob([csv], { type: 'text/csv' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `voters_${new Date().toISOString().slice(0,10)}.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
-        showToast('Voters exported.', 'success');
+        return csv;
     }
 
-    function importNominees(csvText) {
+    function exportVoters() {
+        const csv = getVotersCsvData();
+        if (!csv) { showToast('No voters to export.', 'error'); return; }
+        downloadCsv(csv, `voters_${new Date().toISOString().slice(0,10)}.csv`);
+    }
+
+    function exportVotersExcel() {
+        const csv = getVotersCsvData();
+        if (!csv) { showToast('No voters to export.', 'error'); return; }
+        generateExcelFromCsv(csv, `voters_${new Date().toISOString().slice(0,10)}.xlsx`);
+    }
+
+    async function importNominees(csvText) {
         const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== '');
-        if (lines.length === 0) {
-            showToast('CSV is empty.', 'error');
-            return;
-        }
-        let added = 0,
-            skipped = 0;
+        if (lines.length === 0) { showToast('CSV is empty or invalid.', 'error'); return; }
         let startIdx = 0;
+        let headerMap = { name: 0, categoryid: 1, houseid: 2, photourl: 3, problems: 4, whyme: 5 };
         const first = lines[0].toLowerCase();
-        if (first.includes('name') && first.includes('category')) {
+        if (first.includes('name') || first.includes('categoryid')) {
             startIdx = 1;
-        }
-        for (let i = startIdx; i < lines.length; i++) {
-            const parts = lines[i].split(',').map(s => s.trim());
-            if (parts.length < 2) continue;
-            const name = parts[0];
-            const categoryId = parts[1];
-            const houseId = parts[2] || null;
-            const photo = parts[3] || '';
-            const problems = parts[4] || '';
-            const whyMe = parts[5] || '';
-            
-            if (!name || !categoryId) continue;
-            
-            // Check if category exists
-            const category = getCategoryById(categoryId);
-            if (!category) {
-                showToast(`Category "${categoryId}" not found. Skipping "${name}".`, 'error');
-                skipped++;
-                continue;
+            const headers = parseCsvLine(lines[0]).map(normalizeHeader);
+            if (!headers.includes('name') || !headers.includes('categoryid')) {
+                showToast('Malformed CSV: Missing required columns "name" or "categoryId".', 'error');
+                return;
             }
-            
-            // Validate houseId if provided
-            if (houseId && !getHouseById(houseId)) {
-                showToast(`House "${houseId}" not found for nominee "${name}". Skipping.`, 'error');
-                skipped++;
-                continue;
-            }
-            
-            // Check for duplicate
-            if (appData.nominees.some(n => n.name.toLowerCase() === name.toLowerCase() && n.categoryId === categoryId)) {
-                skipped++;
-                continue;
-            }
-            
-            appData.nominees.push({
-                id: generateId(),
-                name: name,
-                categoryId: categoryId,
-                houseId: houseId,
-                photo: photo,
-                manifesto: {
-                    problems: problems,
-                    promises: problems,
-                    whyMe: whyMe
-                }
+            headerMap = {};
+            headers.forEach((h, idx) => {
+                let key = h;
+                if (h === 'photo' || h === 'photourl') key = 'photourl';
+                headerMap[key] = idx;
             });
-            // Initialize results for this nominee
-            if (!appData.results[categoryId]) {
-                appData.results[categoryId] = {};
+        }
+        const rows = [];
+        for (let i = startIdx; i < lines.length; i++) {
+            const parts = parseCsvLine(lines[i]);
+            if (parts.length === 0 || (parts.length === 1 && parts[0] === '')) continue;
+            const name = (parts[headerMap.name] || '').trim();
+            const categoryId = (parts[headerMap.categoryid] || '').trim();
+            const houseId = (parts[headerMap.houseid] || '').trim() || null;
+            const photo = (parts[headerMap.photourl] || '').trim();
+            const problems = (parts[headerMap.problems] || '').trim();
+            const whyMe = (parts[headerMap.whyme] || '').trim();
+            if (!name || !categoryId) {
+                showToast(`Malformed CSV: Row ${i + 1} is missing required nominee name or category ID.`, 'error');
+                return;
             }
-            appData.results[categoryId][appData.nominees[appData.nominees.length - 1].id] = 0;
-            added++;
+            rows.push({ name, category_id: categoryId, house_id: houseId, photo, problems, whyMe });
+        }
+
+        let added = 0;
+        let skipped = 0;
+        for (const r of rows) {
+            if (!getCategoryById(r.category_id)) {
+                skipped++;
+                continue;
+            }
+            const existingIdx = appData.nominees.findIndex(n =>
+                n.name.toLowerCase() === r.name.toLowerCase() && n.categoryId === r.category_id
+            );
+            if (existingIdx !== -1) {
+                skipped++;
+            } else {
+                appData.nominees.push({
+                    id: generateId(),
+                    name: r.name,
+                    categoryId: r.category_id,
+                    houseId: r.house_id || null,
+                    photo: r.photo || '',
+                    manifesto: { problems: r.problems || '', promises: r.problems || '', whyMe: r.whyMe || '' }
+                });
+                added++;
+            }
         }
         saveData();
+        initializeResults();
         renderAllSettings();
-        showToast(`Imported ${added} nominees (${skipped} duplicates skipped).`, 'success');
+        showToast(`Imported ${added} new nominees (${skipped} duplicates skipped).`, 'success');
     }
 
-    function exportNominees() {
-        if (appData.nominees.length === 0) {
-            showToast('No nominees to export.', 'error');
-            return;
-        }
+    function getNomineesCsvData() {
+        if (appData.nominees.length === 0) return null;
         let csv = 'name,categoryId,houseId,photoUrl,problems,whyMe\n';
         for (const n of appData.nominees) {
             const cat = getCategoryById(n.categoryId);
@@ -1359,74 +1737,142 @@
             const photo = n.photo || '';
             const problems = (n.manifesto?.problems || '').replace(/,/g, ' ');
             const whyMe = (n.manifesto?.whyMe || '').replace(/,/g, ' ');
-            csv += `${n.name},${catId},${houseId},${photo},${problems},${whyMe}\n`;
+            csv += [n.name, catId, houseId, photo, problems, whyMe].map(csvEscape).join(',') + '\n';
         }
-        const blob = new Blob([csv], { type: 'text/csv' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `nominees_${new Date().toISOString().slice(0,10)}.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
-        showToast('Nominees exported.', 'success');
+        return csv;
     }
 
-    function importHouses(csvText) {
+    function exportNominees() {
+        const csv = getNomineesCsvData();
+        if (!csv) { showToast('No nominees to export.', 'error'); return; }
+        downloadCsv(csv, `nominees_${new Date().toISOString().slice(0,10)}.csv`);
+    }
+
+    function exportNomineesExcel() {
+        const csv = getNomineesCsvData();
+        if (!csv) { showToast('No nominees to export.', 'error'); return; }
+        generateExcelFromCsv(csv, `nominees_${new Date().toISOString().slice(0,10)}.xlsx`);
+    }
+
+    async function importHouses(csvText) {
         const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== '');
-        if (lines.length === 0) {
-            showToast('CSV is empty.', 'error');
-            return;
-        }
-        let added = 0,
-            skipped = 0;
+        if (lines.length === 0) { showToast('CSV is empty or invalid.', 'error'); return; }
         let startIdx = 0;
         const first = lines[0].toLowerCase();
-        if (first.includes('name') && first.includes('color')) {
+        if (first.includes('name') || first.includes('color')) {
             startIdx = 1;
-        }
-        for (let i = startIdx; i < lines.length; i++) {
-            const parts = lines[i].split(',').map(s => s.trim());
-            if (parts.length < 1) continue;
-            const name = parts[0];
-            const color = parts[1] || '#3498db';
-            
-            if (!name) continue;
-            
-            // Check for duplicate
-            if (appData.houses.some(h => h.name.toLowerCase() === name.toLowerCase())) {
-                skipped++;
-                continue;
+            const headers = parseCsvLine(lines[0]);
+            if (!headers.map(normalizeHeader).includes('name')) {
+                showToast('Malformed CSV: Missing required column "name".', 'error');
+                return;
             }
-            
-            const id = name.toLowerCase().replace(/\s+/g, '_') + '_' + Date.now().toString(36);
-            appData.houses.push({ id, name: name, color: color });
-            added++;
+        }
+        const rows = [];
+        for (let i = startIdx; i < lines.length; i++) {
+            const parts = parseCsvLine(lines[i]);
+            if (parts.length === 0 || (parts.length === 1 && parts[0] === '')) continue;
+            const name = parts[0]?.trim();
+            const rawColor = parts[1]?.trim() || 'Blue';
+            if (!name) { showToast(`Malformed CSV: Row ${i + 1} is missing the name value.`, 'error'); return; }
+            const colorHex = colorNameToHex(rawColor);
+            if (!colorHex) { showToast(`Malformed CSV: Row ${i + 1} has an invalid color "${rawColor}".`, 'error'); return; }
+            rows.push({ name, color: colorHex });
+        }
+        let added = 0;
+        let skipped = 0;
+        for (const r of rows) {
+            const existingIdx = appData.houses.findIndex(h =>
+                h.name.toLowerCase() === r.name.toLowerCase()
+            );
+            if (existingIdx !== -1) {
+                skipped++;
+            } else {
+                appData.houses.push({
+                    id: r.name.toLowerCase().replace(/\s+/g, '_') + '_' + Date.now().toString(36),
+                    name: r.name,
+                    color: r.color
+                });
+                added++;
+            }
         }
         saveData();
         renderAllSettings();
         showToast(`Imported ${added} houses (${skipped} duplicates skipped).`, 'success');
     }
 
-    function exportHouses() {
-        if (appData.houses.length === 0) {
-            showToast('No houses to export.', 'error');
-            return;
-        }
+    function getHousesCsvData() {
+        if (appData.houses.length === 0) return null;
         let csv = 'name,color\n';
         for (const h of appData.houses) {
-            csv += `${h.name},${h.color}\n`;
+            csv += `${h.name},${hexToColorName(h.color)}\n`;
         }
-        const blob = new Blob([csv], { type: 'text/csv' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `houses_${new Date().toISOString().slice(0,10)}.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
-        showToast('Houses exported.', 'success');
+        return csv;
     }
 
-    function clearAllVoters() {
+    function exportHouses() {
+        const csv = getHousesCsvData();
+        if (!csv) { showToast('No houses to export.', 'error'); return; }
+        downloadCsv(csv, `houses_${new Date().toISOString().slice(0,10)}.csv`);
+    }
+
+    function exportHousesExcel() {
+        const csv = getHousesCsvData();
+        if (!csv) { showToast('No houses to export.', 'error'); return; }
+        generateExcelFromCsv(csv, `houses_${new Date().toISOString().slice(0,10)}.xlsx`);
+    }
+
+    async function importCategories(csvText) {
+        const lines = csvText.split(/\r?\n/).filter(line => line.trim() !== '');
+        if (lines.length === 0) { showToast('CSV is empty or invalid.', 'error'); return; }
+        let startIdx = 0;
+        let headerMap = { name: 0, housespecific: 1, houseid: 2 };
+        const first = lines[0].toLowerCase();
+        if (first.includes('name') || first.includes('housespecific') || first.includes('houseid')) {
+            startIdx = 1;
+            const headers = parseCsvLine(lines[0]).map(normalizeHeader);
+            if (!headers.includes('name')) {
+                showToast('Malformed CSV: Missing required column "name".', 'error');
+                return;
+            }
+            headerMap = {};
+            headers.forEach((h, idx) => { headerMap[h] = idx; });
+        }
+        const rows = [];
+        for (let i = startIdx; i < lines.length; i++) {
+            const parts = parseCsvLine(lines[i]);
+            if (parts.length === 0 || (parts.length === 1 && parts[0] === '')) continue;
+            const name = (parts[headerMap.name] || '').trim();
+            const houseSpecificStr = (parts[headerMap.housespecific] || 'false').trim().toLowerCase();
+            const houseSpecific = houseSpecificStr === 'true' || houseSpecificStr === '1' || houseSpecificStr === 'yes';
+            const houseId = (parts[headerMap.houseid] || '').trim() || null;
+            if (!name) { showToast(`Malformed CSV: Row ${i + 1} is missing the name value.`, 'error'); return; }
+            rows.push({ name, houseSpecific, houseId });
+        }
+        let added = 0;
+        let skipped = 0;
+        for (const r of rows) {
+            const existingIdx = appData.categories.findIndex(c =>
+                c.name.toLowerCase() === r.name.toLowerCase()
+            );
+            if (existingIdx !== -1) {
+                skipped++;
+            } else {
+                appData.categories.push({
+                    id: r.name.toLowerCase().replace(/\s+/g, '_') + '_' + Date.now().toString(36),
+                    name: r.name,
+                    houseSpecific: r.houseSpecific,
+                    houseId: r.houseId
+                });
+                added++;
+            }
+        }
+        saveData();
+        initializeResults();
+        renderAllSettings();
+        showToast(`Imported ${added} categories (${skipped} duplicates skipped).`, 'success');
+    }
+
+    async function clearAllVoters() {
         if (!confirm('Remove all voters? This will also clear all votes.')) return;
         appData.voters = [];
         activeHomeVoterId = null;
@@ -1508,20 +1954,17 @@
             encrypted = btoa(JSON.stringify(voteData));
         }
 
-        // Update voter
         voter.hasVoted = true;
         voter.skipped = false;
         voter.pinHash = pinHash;
         voter.voteEncrypted = encrypted;
-        voter.voteTimestamp = new Date().toISOString();
+        voter.voteTimestamp = voteData.timestamp;
 
-        // Update results
         for (const catId in selections) {
             const nomineeId = selections[catId];
             if (!appData.results[catId]) appData.results[catId] = {};
             appData.results[catId][nomineeId] = (appData.results[catId][nomineeId] || 0) + 1;
         }
-
         saveData();
         renderAll();
         showToast('✅ Your votes have been cast!', 'success');
@@ -1564,33 +2007,27 @@
             showToast('You did not set a PIN for this vote.', 'error');
             return null;
         }
-        if (hashString(pin) !== voter.pinHash) {
+        const pinHash = hashString(pin);
+        if (pinHash !== voter.pinHash) {
             showToast('Incorrect PIN.', 'error');
             return null;
         }
-        if (!voter.voteEncrypted) {
-            showToast('No vote data found.', 'error');
-            return null;
-        }
         try {
-            let voteData;
-            if (voter.pinHash) {
-                voteData = await decryptVote(voter.voteEncrypted, pin);
-            } else {
-                voteData = JSON.parse(atob(voter.voteEncrypted));
-            }
-            if (!voteData) {
-                showToast('Failed to decrypt vote.', 'error');
-                return null;
+            let voteData = null;
+            if (voter.voteEncrypted) {
+                if (voter.pinHash) {
+                    voteData = await decryptVote(voter.voteEncrypted, pin);
+                } else {
+                    voteData = JSON.parse(atob(voter.voteEncrypted));
+                }
             }
             return voteData;
         } catch (_) {
-            showToast('Failed to decrypt vote. Incorrect PIN or corrupted data.', 'error');
             return null;
         }
     }
 
-    function resetElection() {
+    async function resetElection() {
         if (!confirm('⚠️ Reset all votes and results? This cannot be undone!')) return;
         for (const v of appData.voters) {
             v.hasVoted = false;
@@ -1609,11 +2046,12 @@
         showToast('Election has been reset.', 'info');
     }
 
-    function publishResults() {
-        appData.settings.resultsPublished = !appData.settings.resultsPublished;
+    async function publishResults() {
+        const isPublished = appData.settings.resultsPublished;
+        appData.settings.resultsPublished = !isPublished;
         saveData();
         renderAll();
-        showToast(appData.settings.resultsPublished ? '📊 Results published!' : 'Results unpublished.', 'gold');
+        showToast(isPublished ? 'Results unpublished.' : '📊 Results published!', 'gold');
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1733,19 +2171,41 @@
         document.getElementById('settingsPasswordInput').focus();
     }
 
-    function unlockSettings(password) {
-        const hash = hashString(password);
-        if (hash === appData.settings.adminPasswordHash) {
-            settingsUnlocked = true;
-            document.getElementById('passwordOverlay').classList.remove('active');
-            document.getElementById('settingsPage').classList.add('active');
-            document.getElementById('homepage').style.display = 'none';
-            renderAllSettings();
-            showToast('Settings unlocked.', 'success');
-        } else {
-            document.getElementById('pwError').classList.remove('hidden');
-            showToast('Incorrect password.', 'error');
-        }
+    async function unlockSettings(password) {
+        document.getElementById('pwError').classList.add('hidden');
+        try {
+            const enteredHash = await sha256(password);
+            const storedHash = appData.settings && appData.settings.adminPasswordHash;
+
+            if (storedHash && enteredHash === storedHash) {
+                settingsUnlocked = true;
+                document.getElementById('passwordOverlay').classList.remove('active');
+                document.getElementById('settingsPage').classList.add('active');
+                document.getElementById('homepage').style.display = 'none';
+                renderAllSettings();
+                showToast('Settings unlocked.', 'success');
+                return;
+            }
+
+            // No stored hash set yet — allow any password as first-time setup
+            if (!storedHash) {
+                // Store the hash for future checks
+                appData.settings.adminPasswordHash = enteredHash;
+                saveData();
+                sessionStorage.setItem('adminToken', 'local_offline_token');
+                settingsUnlocked = true;
+                document.getElementById('passwordOverlay').classList.remove('active');
+                document.getElementById('settingsPage').classList.add('active');
+                document.getElementById('homepage').style.display = 'none';
+                renderAllSettings();
+                showToast('Settings unlocked. Password saved locally.', 'success');
+                return;
+            }
+        } catch (_) { /* sha256 failure is extremely unlikely */ }
+
+        // ── 3) All checks failed — wrong password ────────────────────────────
+        document.getElementById('pwError').classList.remove('hidden');
+        showToast('Incorrect password.', 'error');
     }
 
     function closeSettings() {
@@ -1755,7 +2215,7 @@
         renderAll();
     }
 
-    function changeAdminPassword(newPass, confirmPass) {
+    async function changeAdminPassword(newPass, confirmPass) {
         if (!newPass || newPass.length < 4) {
             showToast('Password must be at least 4 characters.', 'error');
             return;
@@ -1764,11 +2224,16 @@
             showToast('Passwords do not match.', 'error');
             return;
         }
-        appData.settings.adminPasswordHash = hashString(newPass);
-        saveData();
-        showToast('Admin password updated.', 'success');
-        document.getElementById('newAdminPass').value = '';
-        document.getElementById('confirmAdminPass').value = '';
+        try {
+            const hashed = await sha256(newPass);
+            appData.settings.adminPasswordHash = hashed;
+            saveData();
+            showToast('Admin password updated.', 'success');
+            document.getElementById('newAdminPass').value = '';
+            document.getElementById('confirmAdminPass').value = '';
+        } catch (_) {
+            showToast('Failed to update password.', 'error');
+        }
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1776,10 +2241,24 @@
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
     function renderAll() {
+        const published = appData.settings.resultsPublished;
+        if (!published) {
+            const publicResultsPage = document.getElementById('publicResultsPage');
+            if (publicResultsPage && publicResultsPage.classList.contains('active')) {
+                closePublicResults();
+                return;
+            }
+        }
         if (document.getElementById('settingsPage').classList.contains('active')) {
             if (settingsUnlocked) {
                 renderAllSettings();
             }
+        } else if (document.getElementById('publicResultsPage') && document.getElementById('publicResultsPage').classList.contains('active')) {
+            renderStatsView(document.getElementById('publicStatsGrid'));
+            renderResultsView(document.getElementById('publicResultsContainer'), false);
+            // Update header branding
+            document.getElementById('schoolNameDisplay').innerHTML = `<i class="fas fa-school"></i> ${appData.schoolName || 'School'}`;
+            document.getElementById('schoolSubtitleDisplay').textContent = appData.schoolSubtitle || '';
         } else {
             renderHomepage();
             updateStatusBadge();
@@ -1812,8 +2291,8 @@
     //  10. EVENT BINDING
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    function init() {
-        loadData();
+    async function init() {
+        await loadData();
         initializeResults();
 
         // ─── Home / Settings toggle ───
@@ -1829,6 +2308,7 @@
             if (document.getElementById('settingsPage').classList.contains('active')) {
                 closeSettings();
             }
+            closePublicResults();
         });
 
         document.getElementById('closeSettingsBtn').addEventListener('click', closeSettings);
@@ -1952,31 +2432,35 @@
         document.getElementById('verifyVoteBtn').addEventListener('click', openVerifyModal);
 
         // ─── Settings: General / Branding ───
-        document.getElementById('brandingForm').addEventListener('submit', function(e) {
+        document.getElementById('brandingForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             const name = document.getElementById('schoolNameInput').value.trim();
             const subtitle = document.getElementById('schoolSubtitleInput').value.trim();
-            if (name) appData.schoolName = name;
-            if (subtitle) appData.schoolSubtitle = subtitle;
+            appData.schoolName = name || appData.schoolName;
+            appData.schoolSubtitle = subtitle || appData.schoolSubtitle;
             saveData();
             renderAllSettings();
             showToast('Branding updated.', 'success');
         });
 
-        document.getElementById('visibilityForm').addEventListener('submit', function(e) {
+        document.getElementById('visibilityForm').addEventListener('submit', async function(e) {
             e.preventDefault();
-            appData.settings.showSkipButton = document.getElementById('showSkipCheckbox').checked;
-            appData.settings.showVerifyButton = document.getElementById('showVerifyCheckbox').checked;
+            const showSkip = document.getElementById('showSkipCheckbox').checked;
+            const showVerify = document.getElementById('showVerifyCheckbox').checked;
+            appData.settings.showSkipButton = showSkip;
+            appData.settings.showVerifyButton = showVerify;
             saveData();
             renderAllSettings();
             showToast('Visibility settings saved.', 'success');
         });
 
         // ─── Settings: Election Mode ───
-        document.getElementById('settingsForm').addEventListener('submit', function(e) {
+        document.getElementById('settingsForm').addEventListener('submit', async function(e) {
             e.preventDefault();
-            appData.settings.electionMode = document.getElementById('electionMode').value;
-            appData.settings.isActive = document.getElementById('electionStatus').value === 'active';
+            const electionMode = document.getElementById('electionMode').value;
+            const isActive = document.getElementById('electionStatus').value === 'active';
+            appData.settings.electionMode = electionMode;
+            appData.settings.isActive = isActive;
             saveData();
             renderAllSettings();
             showToast('Election settings saved.', 'success');
@@ -2061,10 +2545,10 @@
 
         document.getElementById('sampleHouseCsvBtn').addEventListener('click', function() {
             const sample = `name,color
-Red House,#e74c3c
-Green House,#27ae60
-Yellow House,#f39c12
-Blue House,#3498db`;
+Red House,Red
+Green House,Green
+Yellow House,Yellow
+Blue House,Blue`;
             const blob = new Blob([sample], { type: 'text/csv' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -2075,6 +2559,7 @@ Blue House,#3498db`;
         });
 
         document.getElementById('exportHousesBtn').addEventListener('click', exportHouses);
+        document.getElementById('exportHousesExcelBtn').addEventListener('click', exportHousesExcel);
 
         // ─── Settings: Nominees ───
         document.getElementById('nomCategory').addEventListener('change', function() {
@@ -2198,6 +2683,7 @@ Olivia Smith,ADM1005,11,B,8,red`;
         });
 
         document.getElementById('exportVotersBtn').addEventListener('click', exportVoters);
+        document.getElementById('exportVotersExcelBtn').addEventListener('click', exportVotersExcel);
         document.getElementById('clearVotersBtn').addEventListener('click', clearAllVoters);
 
         // ─── Settings: Nominees CSV Import/Export ───
@@ -2256,13 +2742,95 @@ James Rodriguez,deputy_head_boy,,,Organize better events,I have great leadership
         });
 
         document.getElementById('exportNomineesBtn').addEventListener('click', exportNominees);
+        document.getElementById('exportNomineesExcelBtn').addEventListener('click', exportNomineesExcel);
+
+        // ─── Public Results page navigation ───
+        const publicResultsBtn = document.getElementById('publicResultsBtn');
+        if (publicResultsBtn) {
+            publicResultsBtn.addEventListener('click', openPublicResults);
+        }
+        const closePublicResultsBtn = document.getElementById('closePublicResultsBtn');
+        if (closePublicResultsBtn) {
+            closePublicResultsBtn.addEventListener('click', closePublicResults);
+        }
 
         // ─── Settings: Results ───
         document.getElementById('publishResultsBtn').addEventListener('click', publishResults);
+        const exportResultsCsvBtn = document.getElementById('exportResultsCsvBtn');
+        if (exportResultsCsvBtn) {
+            exportResultsCsvBtn.addEventListener('click', exportResultsCsv);
+        }
+        const exportResultsExcelBtn = document.getElementById('exportResultsExcelBtn');
+        if (exportResultsExcelBtn) {
+            exportResultsExcelBtn.addEventListener('click', exportResultsExcel);
+        }
         document.getElementById('resetElectionBtn').addEventListener('click', resetElection);
 
+        // ─── Settings: Categories CSV Import/Export ───
+        const categoryDropArea = document.getElementById('categoryCsvDropArea');
+        const categoryFileInput = document.getElementById('categoryCsvFileInput');
+        if (categoryDropArea && categoryFileInput) {
+            categoryDropArea.addEventListener('click', () => categoryFileInput.click());
+            categoryDropArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                categoryDropArea.style.borderColor = 'var(--primary)';
+                categoryDropArea.style.background = '#e8f0fe';
+            });
+            categoryDropArea.addEventListener('dragleave', () => {
+                categoryDropArea.style.borderColor = '#dce3ec';
+                categoryDropArea.style.background = '#fafcfe';
+            });
+            categoryDropArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                categoryDropArea.style.borderColor = '#dce3ec';
+                categoryDropArea.style.background = '#fafcfe';
+                if (e.dataTransfer.files.length > 0) {
+                    categoryFileInput.files = e.dataTransfer.files;
+                    handleCategoryCsvFile(e.dataTransfer.files[0]);
+                }
+            });
+            categoryFileInput.addEventListener('change', function() {
+                if (this.files.length > 0) {
+                    handleCategoryCsvFile(this.files[0]);
+                }
+                this.value = '';
+            });
+        }
+
+        async function handleCategoryCsvFile(file) {
+            try {
+                const text = await file.text();
+                importCategories(text);
+            } catch (_) {
+                showToast('Failed to read file.', 'error');
+            }
+        }
+
+        const sampleCategoryCsvBtn = document.getElementById('sampleCategoryCsvBtn');
+        if (sampleCategoryCsvBtn) {
+            sampleCategoryCsvBtn.addEventListener('click', function() {
+                const sample = `name,houseSpecific,houseId\nHead Boy,false,\nHead Girl,false,\nHouse Captain,true,red\nHouse Vice Captain,true,red`;
+                const blob = new Blob([sample], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'sample_categories.csv';
+                a.click();
+                URL.revokeObjectURL(url);
+            });
+        }
+
+        const exportCategoriesBtn = document.getElementById('exportCategoriesBtn');
+        if (exportCategoriesBtn) {
+            exportCategoriesBtn.addEventListener('click', exportCategories);
+        }
+        const exportCategoriesExcelBtn = document.getElementById('exportCategoriesExcelBtn');
+        if (exportCategoriesExcelBtn) {
+            exportCategoriesExcelBtn.addEventListener('click', exportCategoriesExcel);
+        }
+
         // ─── Settings: Export / Clear ───
-        document.getElementById('exportDataBtn').addEventListener('click', function() {
+        function triggerJsonExport() {
             const json = JSON.stringify(appData, null, 2);
             const blob = new Blob([json], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
@@ -2272,16 +2840,375 @@ James Rodriguez,deputy_head_boy,,,Organize better events,I have great leadership
             a.click();
             URL.revokeObjectURL(url);
             showToast('Data exported.', 'success');
-        });
+        }
 
-        document.getElementById('clearAllDataBtn').addEventListener('click', function() {
+        document.getElementById('exportDataBtn').addEventListener('click', triggerJsonExport);
+
+        const exportResultsJsonBtn = document.getElementById('exportResultsJsonBtn');
+        if (exportResultsJsonBtn) {
+            exportResultsJsonBtn.addEventListener('click', triggerJsonExport);
+        }
+
+        document.getElementById('clearAllDataBtn').addEventListener('click', async function() {
             if (!confirm('⚠️ Delete ALL election data? This cannot be undone!')) return;
             localStorage.removeItem(STORAGE_KEY);
-            loadData();
+            await loadData();
             initializeResults();
             renderAll();
             showToast('All data cleared.', 'info');
         });
+
+        // ─── persistent hidden file input for JSON import ───
+        let _pendingImportJson = null; // stores parsed JSON while modal is open
+        const _jsonFileInput = document.getElementById('jsonImportFileInput');
+
+        function triggerJsonImport() {
+            _pendingImportJson = null;
+            _jsonFileInput.value = '';
+            _jsonFileInput.click();
+        }
+
+        _jsonFileInput.addEventListener('change', async function() {
+            if (!this.files || this.files.length === 0) return;
+            const file = this.files[0];
+            try {
+                const text = await file.text();
+                const parsed = JSON.parse(text);
+                if (!parsed || typeof parsed !== 'object') throw new Error('Invalid JSON structure.');
+                _pendingImportJson = parsed;
+                openJsonMergeModal();
+            } catch (e) {
+                showToast('Invalid JSON file: ' + e.message, 'error');
+            }
+            this.value = '';
+        });
+
+        document.getElementById('importDataBtn').addEventListener('click', triggerJsonImport);
+
+        const importResultsJsonBtn = document.getElementById('importResultsJsonBtn');
+        if (importResultsJsonBtn) {
+            importResultsJsonBtn.addEventListener('click', triggerJsonImport);
+        }
+
+        function openJsonMergeModal() {
+            const modal = document.getElementById('jsonMergeModal');
+            document.getElementById('jsonMergeOptions').classList.remove('hidden');
+            document.getElementById('jsonMergeSummary').classList.add('hidden');
+            document.getElementById('jsonMergeSummary').innerHTML = '';
+            document.getElementById('jsonMergeError').classList.add('hidden');
+            document.getElementById('jsonMergeError').textContent = '';
+            document.getElementById('jsonMergeDoneRow').classList.add('hidden');
+
+            modal.classList.remove('hidden');
+            modal.classList.add('active');
+        }
+
+        function closeJsonMergeModal() {
+            const modal = document.getElementById('jsonMergeModal');
+            modal.classList.remove('active');
+            modal.classList.add('hidden');
+            _pendingImportJson = null;
+        }
+
+        // Bind event listeners to the direct choice buttons
+        document.getElementById('jsonMergeAppendBtn').addEventListener('click', () => executeJsonImport('append'));
+        document.getElementById('jsonMergeReplaceBtn').addEventListener('click', () => executeJsonImport('replace'));
+        document.getElementById('jsonMergeCancelBtn').addEventListener('click', closeJsonMergeModal);
+        document.getElementById('jsonMergeDoneBtn').addEventListener('click', () => {
+            closeJsonMergeModal();
+            renderAll();              // recalculates stats, results, winners, rankings, vote %
+            updateButtonVisibility();
+        });
+
+        // ─── Core offline merge engine (no backend, no JWT) ───
+        async function executeJsonImport(mode) {
+            console.log('[Import] executeJsonImport called with mode:', mode);
+            console.log('[Import] _pendingImportJson:', _pendingImportJson ? 'has data' : 'NULL - aborting');
+            if (!_pendingImportJson) { closeJsonMergeModal(); return; }
+
+            if (mode === 'replace') {
+                if (!confirm('⚠️ Override mode will PERMANENTLY REPLACE all current election data (voters, votes, nominees, results) with the imported file.\n\nThis cannot be undone. Continue?')) return;
+            }
+
+            document.getElementById('jsonMergeOptions').classList.add('hidden');
+            const errEl = document.getElementById('jsonMergeError');
+            errEl.classList.add('hidden');
+            errEl.textContent = '';
+
+            try {
+                const imported = _pendingImportJson;
+
+                // Counters for summary
+                const s = {
+                    houses_added: 0, houses_skipped: 0,
+                    categories_added: 0, categories_skipped: 0,
+                    nominees_added: 0, nominees_skipped: 0,
+                    voters_added: 0, voters_skipped: 0, voters_overwritten: 0,
+                    votes_added: 0
+                };
+
+                if (mode === 'replace') {
+                    // ── Override: completely replace appData with imported file ──
+                    // Preserve the local admin password hash so the user is not locked out
+                    const currentAdminHash = appData.settings && appData.settings.adminPasswordHash;
+                    appData = {
+                        schoolName:     imported.schoolName     || appData.schoolName,
+                        schoolSubtitle: imported.schoolSubtitle || appData.schoolSubtitle,
+                        houses:         Array.isArray(imported.houses)     ? [...imported.houses]     : [],
+                        categories:     Array.isArray(imported.categories) ? [...imported.categories] : [],
+                        nominees:       Array.isArray(imported.nominees)   ? [...imported.nominees]   : [],
+                        voters:         Array.isArray(imported.voters)     ? [...imported.voters]     : [],
+                        settings:       imported.settings ? { ...imported.settings } : appData.settings,
+                        results:        imported.results  ? { ...imported.results  } : {}
+                    };
+                    // Always restore the local admin password hash
+                    if (currentAdminHash) {
+                        appData.settings.adminPasswordHash = currentAdminHash;
+                    }
+                    s.houses_added      = appData.houses.length;
+                    s.categories_added  = appData.categories.length;
+                    s.nominees_added    = appData.nominees.length;
+                    s.voters_added      = appData.voters.length;
+                    for (const catId in appData.results) {
+                        for (const nomId in appData.results[catId]) {
+                            s.votes_added += (appData.results[catId][nomId] || 0);
+                        }
+                    }
+
+                } else {
+                    // ── Append: smart offline merge ──
+                    console.log('[Import] Starting APPEND merge...');
+                    console.log('[Import] Local results before merge:', JSON.stringify(appData.results));
+                    console.log('[Import] Imported results to merge:', JSON.stringify(imported.results));
+
+                    const categoryMap = {};
+                    const houseMap = {};
+                    const nomineeMap = {};
+
+                    // 1. Houses — deduplicate by id then by name (case-insensitive)
+                    for (const h of (imported.houses || [])) {
+                        const hName = String(h.name || '').trim().toLowerCase();
+                        const dupById   = appData.houses.find(e => e.id === h.id);
+                        const dupByName = appData.houses.find(e =>
+                            String(e.name || '').trim().toLowerCase() === hName
+                        );
+                        if (dupById) {
+                            houseMap[h.id] = dupById.id;
+                            s.houses_skipped++;
+                        } else if (dupByName) {
+                            houseMap[h.id] = dupByName.id;
+                            s.houses_skipped++;
+                        } else {
+                            appData.houses.push({ ...h });
+                            houseMap[h.id] = h.id;
+                            s.houses_added++;
+                        }
+                    }
+
+                    // 2. Categories — deduplicate by id then by name
+                    for (const c of (imported.categories || [])) {
+                        const cName = String(c.name || '').trim().toLowerCase();
+                        const dupById   = appData.categories.find(e => e.id === c.id);
+                        const dupByName = appData.categories.find(e =>
+                            String(e.name || '').trim().toLowerCase() === cName
+                        );
+                        if (dupById) {
+                            categoryMap[c.id] = dupById.id;
+                            s.categories_skipped++;
+                        } else if (dupByName) {
+                            categoryMap[c.id] = dupByName.id;
+                            s.categories_skipped++;
+                        } else {
+                            const cCopy = { ...c };
+                            if (cCopy.houseId) {
+                                cCopy.houseId = houseMap[cCopy.houseId] || cCopy.houseId;
+                            }
+                            appData.categories.push(cCopy);
+                            categoryMap[c.id] = c.id;
+                            s.categories_added++;
+                        }
+                    }
+
+                    // 3. Nominees — deduplicate by id then by name + mapped category + mapped house
+                    for (const n of (imported.nominees || [])) {
+                        const mappedCatId = categoryMap[n.categoryId] || n.categoryId;
+                        const mappedHouseId = n.houseId ? (houseMap[n.houseId] || n.houseId) : null;
+                        const nName = String(n.name || '').trim().toLowerCase();
+
+                        const dupById   = appData.nominees.find(e => e.id === n.id);
+                        const dupByName = appData.nominees.find(e =>
+                            String(e.name || '').trim().toLowerCase() === nName &&
+                            e.categoryId === mappedCatId &&
+                            e.houseId === mappedHouseId
+                        );
+
+                        if (dupById) {
+                            nomineeMap[n.id] = dupById.id;
+                            s.nominees_skipped++;
+                        } else if (dupByName) {
+                            nomineeMap[n.id] = dupByName.id;
+                            s.nominees_skipped++;
+                        } else {
+                            const nCopy = { ...n };
+                            nCopy.categoryId = mappedCatId;
+                            nCopy.houseId = mappedHouseId;
+                            appData.nominees.push(nCopy);
+                            nomineeMap[n.id] = n.id;
+                            s.nominees_added++;
+                        }
+                    }
+
+                    // 4. Voters — deduplicate by rollNumber (primary key), then admissionNumber
+                    for (const v of (imported.voters || [])) {
+                        // Apply template ID auto-correction
+                        const rStr = String(v.rollNumber || '').trim();
+                        const cStr = String(v.className || '').trim();
+                        const sStr = String(v.section || '').trim();
+                        const adm = String(v.admissionNumber || '').trim();
+                        if (adm.toLowerCase() === '1' + cStr.toLowerCase() + sStr.toLowerCase() && rStr && rStr !== '1') {
+                            v.admissionNumber = rStr + cStr + sStr;
+                        }
+
+                        // Map voter houseId
+                        if (v.houseId) {
+                            v.houseId = houseMap[v.houseId] || v.houseId;
+                        }
+
+                        // Map voter's encrypted selections if decryptable
+                        if (v.voteEncrypted && !v.pinHash) {
+                            try {
+                                const voteData = JSON.parse(atob(v.voteEncrypted));
+                                if (voteData && voteData.selections) {
+                                    const mappedSelections = {};
+                                    for (const catId in voteData.selections) {
+                                        const mappedCatId = categoryMap[catId] || catId;
+                                        const mappedNomId = nomineeMap[voteData.selections[catId]] || voteData.selections[catId];
+                                        mappedSelections[mappedCatId] = mappedNomId;
+                                    }
+                                    voteData.selections = mappedSelections;
+                                    v.voteEncrypted = btoa(JSON.stringify(voteData));
+                                }
+                            } catch (_) {}
+                        }
+
+                        const vAdm = String(v.admissionNumber || '').trim().toLowerCase();
+                        const existing = vAdm ? appData.voters.find(e => {
+                            const eAdm = String(e.admissionNumber || '').trim().toLowerCase();
+                            return eAdm === vAdm;
+                        }) : null;
+
+                        if (existing) {
+                            if (v.hasVoted && !existing.hasVoted) {
+                                existing.hasVoted = true;
+                                existing.skipped = v.skipped;
+                                existing.voteEncrypted = v.voteEncrypted;
+                                existing.voteTimestamp = v.voteTimestamp;
+                                existing.pinHash = v.pinHash;
+                                s.voters_overwritten++;
+                            } else {
+                                s.voters_skipped++;
+                            }
+                        } else {
+                            appData.voters.push({ ...v });
+                            s.voters_added++;
+                        }
+                    }
+
+                    // 5. Results — add vote counts (merge, not replace) with mapped IDs
+                    if (imported.results && typeof imported.results === 'object') {
+                        if (!appData.results) appData.results = {};
+                        for (const catId in imported.results) {
+                            const mappedCatId = categoryMap[catId] || catId;
+                            if (!appData.results[mappedCatId]) appData.results[mappedCatId] = {};
+                            for (const nomId in imported.results[catId]) {
+                                const mappedNomId = nomineeMap[nomId] || nomId;
+                                const incoming = Number(imported.results[catId][nomId]) || 0;
+                                appData.results[mappedCatId][mappedNomId] = (appData.results[mappedCatId][mappedNomId] || 0) + incoming;
+                                s.votes_added += incoming;
+                            }
+                        }
+                    }
+                }
+
+                // ── Persist to localStorage & recalculate everything ──
+                console.log('[Import] Merge stats:', JSON.stringify(s));
+                console.log('[Import] Local results AFTER merge:', JSON.stringify(appData.results));
+                saveData();          // write merged appData to localStorage
+                initializeResults(); // ensure all categories have result entries
+                renderAll();         // immediately re-render stats, results, winners, rankings
+                updateButtonVisibility();
+
+                // Compute final stats for summary
+                const finalVoters    = appData.voters.length;
+                const finalVoted     = appData.voters.filter(v => v.hasVoted && !v.skipped).length;
+                const finalSkipped   = appData.voters.filter(v => v.skipped).length;
+                const finalPending   = finalVoters - finalVoted - finalSkipped;
+                const totalMergedVotes = (() => {
+                    let t = 0;
+                    for (const cId in appData.results)
+                        for (const nId in appData.results[cId])
+                            t += (appData.results[cId][nId] || 0);
+                    return t;
+                })();
+                const modeLabel = mode === 'replace' ? '⚠️ Override (Replace)' : '📋 Append (Merge)';
+
+                // ── Build detailed summary ──
+                const summaryEl = document.getElementById('jsonMergeSummary');
+                summaryEl.innerHTML = `
+                    <div style="margin-bottom:8px;">
+                        <strong>✅ Import complete</strong>
+                        &nbsp;<span style="background:#e8f0fe;color:var(--primary);padding:2px 10px;border-radius:12px;font-size:0.82rem;font-weight:600;">${modeLabel}</span>
+                    </div>
+                    <table style="width:100%;border-collapse:collapse;font-size:0.86rem;">
+                        <tr style="border-bottom:1px solid #e0e7ef;">
+                            <td style="padding:4px 0;color:#555;">🏠 Houses</td>
+                            <td style="padding:4px 8px;text-align:right;"><b style="color:#27ae60;">${s.houses_added} added</b></td>
+                            <td style="padding:4px 0;text-align:right;color:#999;">${s.houses_skipped} skipped</td>
+                        </tr>
+                        <tr style="border-bottom:1px solid #e0e7ef;">
+                            <td style="padding:4px 0;color:#555;">🏷️ Categories</td>
+                            <td style="padding:4px 8px;text-align:right;"><b style="color:#27ae60;">${s.categories_added} added</b></td>
+                            <td style="padding:4px 0;text-align:right;color:#999;">${s.categories_skipped} skipped</td>
+                        </tr>
+                        <tr style="border-bottom:1px solid #e0e7ef;">
+                            <td style="padding:4px 0;color:#555;">👤 Nominees</td>
+                            <td style="padding:4px 8px;text-align:right;"><b style="color:#27ae60;">${s.nominees_added} added</b></td>
+                            <td style="padding:4px 0;text-align:right;color:#999;">${s.nominees_skipped} skipped</td>
+                        </tr>
+                        <tr style="border-bottom:1px solid #e0e7ef;">
+                            <td style="padding:4px 0;color:#555;">🧑‍🎓 Voters</td>
+                            <td style="padding:4px 8px;text-align:right;">
+                                <b style="color:#27ae60;">${s.voters_added} added</b>${s.voters_overwritten > 0 ? `, <b style="color:#e67e22;">${s.voters_overwritten} updated</b>` : ''}
+                            </td>
+                            <td style="padding:4px 0;text-align:right;color:#999;">${s.voters_skipped} skipped</td>
+                        </tr>
+                        <tr>
+                            <td style="padding:4px 0;color:#555;">🗳️ Votes merged</td>
+                            <td style="padding:4px 8px;text-align:right;" colspan="2"><b style="color:var(--primary);">${s.votes_added}</b></td>
+                        </tr>
+                    </table>
+                    <div style="margin-top:12px;padding-top:8px;border-top:1px solid #dce3ec;line-height:1.9;">
+                        <b>Final Election State:</b><br>
+                        👥 Total Voters: <b>${finalVoters}</b> &nbsp;·&nbsp;
+                        ✅ Voted: <b>${finalVoted}</b> &nbsp;·&nbsp;
+                        ⏩ Skipped: <b>${finalSkipped}</b> &nbsp;·&nbsp;
+                        🕐 Pending: <b>${finalPending}</b><br>
+                        📊 Total vote count (all categories): <b>${totalMergedVotes}</b>
+                    </div>
+                `;
+                summaryEl.classList.remove('hidden');
+                document.getElementById('jsonMergeDoneRow').classList.remove('hidden');
+
+                showToast(`Import complete! ${s.voters_added} voters, ${s.votes_added} votes merged.`, 'success');
+
+            } catch (err) {
+                const errEl = document.getElementById('jsonMergeError');
+                errEl.textContent = 'Import error: ' + err.message;
+                errEl.classList.remove('hidden');
+                document.getElementById('jsonMergeOptions').classList.remove('hidden');
+                showToast('Import failed: ' + err.message, 'error');
+            }
+        }
 
         // ─── Settings Tabs ───
         document.querySelectorAll('.settings-tabs .tab-btn').forEach(btn => {
